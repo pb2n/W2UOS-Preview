@@ -1,0 +1,723 @@
+{
+  "max_open_trades": 4,
+  "stake_currency": "USDT",
+  "stake_amount": "unlimited",
+  "tradable_balance_ratio": 0.9,
+
+  "strategy": "ReflexivityStrategy",
+  "timeframe": "1m",
+  "startup_candle_count": 360,
+  "process_only_new_candles": true,
+
+  "trading_mode": "futures",
+  "margin_mode": "isolated",
+  "dry_run": false,
+
+  "use_custom_stoploss": true,
+  "use_exit_signal": false,
+  "stoploss": -0.303,
+  "minimal_roi": { "0": 0.99 },
+
+  "order_types": {
+    "entry": "market",
+    "exit": "market",
+    "stoploss": "market",
+    "stoploss_on_exchange": false,
+    "stoploss_on_exchange_interval": 60,
+    "stoploss_on_exchange_limit_ratio": 0.99
+  },
+
+  "unfilledtimeout": { "entry": 2, "exit": 2, "exit_timeout_count": 0, "unit": "minutes" },
+
+  "entry_pricing": {
+    "price_side": "other",
+    "use_order_book": true,
+    "order_book_top": 3,
+    "price_last_balance": 0.0,
+    "check_depth_of_market": { "enabled": true, "bids_to_ask_delta": 0.5 }
+  },
+  "exit_pricing": {
+    "price_side": "other",
+    "use_order_book": true,
+    "order_book_top": 3
+  },
+
+  "position_adjustment_enable": true,
+  "max_entry_position_adjustment": 5,
+
+  "exchange": {
+    "name": "okx",
+    "key": "xxx",
+    "secret": "xxx",
+    "password": "xxx",
+    "leverage": 20,
+
+    "pair_whitelist": [
+      "BTC/USDT:USDT",
+      "BNB/USDT:USDT",
+      "ETH/USDT:USDT",
+      "DOGE/USDT:USDT"
+    ],
+    "pair_blacklist": [],
+
+    "ccxt_config": {
+      "enableRateLimit": true,
+      "rateLimit": 200,
+      "timeout": 30000,
+      "options": {
+        "defaultType": "swap",
+        "positionMode": "net",
+        "marginMode": "isolated",
+        "defaultLeverage": 20
+      }
+    },
+    "ccxt_async_config": { "enableRateLimit": true, "rateLimit": 200, "timeout": 30000 },
+    "enable_ws": true
+  },
+
+  "pairlists": [{ "method": "StaticPairList" }],
+  "edge": { "enabled": false },
+
+  "api_server": {
+    "enabled": true,
+    "listen_ip_address": "0.0.0.0",
+    "listen_port": 8080,
+    "verbosity": "error",
+    "enable_openapi": false,
+    "jwt_secret_key": "somethingrandom",
+    "CORS_origins": [
+      "http://localhost:8080",
+      "http://127.0.0.1:8080",
+      "http://192.168.2.204:8080",
+      "http://0.0.0.0:8080"  
+    ],
+    "username": "freqtrader",
+    "password": "freqtrader"
+  },
+
+  "bot_name": "LFT_Optimized_Bot1",
+  "initial_state": "running",
+  "force_entry_enable": false,
+
+  "internals": { "process_throttle_secs": 1, "sd_notify": false },
+
+  "dataformat_ohlcv": "feather",
+  "dataformat_trades": "feather",
+
+  "verbosity": 2,
+  "logfile": "/freqtrade/user_data/bot1/logs/hft_optimized.log",
+
+  "db_url": "sqlite:////freqtrade/user_data/bot1/freqtrade.sqlite",
+
+  "pair_overrides": {
+    "BTC/USDT:USDT": {
+      "strict_long_htf": false,
+      "strict_short_htf": true,
+      "max_notional_usdt": 880,
+      "min_profit_exit": 0.02,
+      "near_exit_mult": 0.90,
+      "near_exit_alt": 0.017,
+      "pb_min_profit_gate": 0.019,
+      "runner_min_frac": 0.20,
+      "opp_stage_exit": {
+        "stage1_r": 0.30,
+        "stage1_reduce": 0.74,
+        "stage1_pullback_pct": 0.002,
+        "stage2_r": 0.98,
+        "stage2_reduce": 0.32,
+        "stage2_pullback_pct": 0.006,
+        "stage3_r": 1.85,
+        "stage3_reduce": 0.0,
+        "stage3_pullback_pct": 0.012,
+        "stage_timeout_minutes": 90.0,
+        "note": "stoploss 层接管反向三段落袋；默认需分别回撤 0.2%/0.6%/1.2% 后落袋，可调为 0 恢复立即执行。"
+      },
+      "small_target_max_hold_minutes": 40,
+      "def_add_enable": false,
+      "hard_tp": 0.10,
+      "execution_slippage": {
+        "tighten_bps": 20.0,
+        "severe_bps": 34.0,
+        "risk_scale": 0.94,
+        "risk_scale_severe": 0.88,
+        "cap_share": 0.80,
+        "cap_share_severe": 0.70
+      },
+      "fill_slippage_adjust": {
+        "threshold": 0.055,
+        "lock_boost": 0.60,
+        "lock_boost_max": 1.45,
+        "target_penalty": 0.38,
+        "leg_penalty": 0.55,
+        "leg_floor": 0.60
+      },
+      "exit_tuning": {
+        "measured_move_r_mult": 1.384,
+        "measured_move_min_profit": 0.034,
+        "measured_move_lock_share": 0.68,
+        "measured_move_lock_min": 0.021,
+        "measured_move_risk_basis": "hybrid"
+      },
+      "expectation_guard_enable": true,
+      "expectation_target_r": 1.35,
+      "expectation_release_r": 0.45,
+      "expectation_release_floor_r": 0.30,
+      "expectation_release_floor_pct": 0.000,
+      "expectation_drawdown_r": 0.14,
+      "expectation_floor_max_r": 1.60,
+      "expectation_floor_escalate_at_r": 1.10,
+      "expectation_relax_minutes": 50.0,
+      "expectation_log_cooldown": 8.0,
+      "expectation_context_pad": 0.140
+    },
+    "ETH/USDT:USDT": {
+      "strict_long_htf": true,
+      "strict_short_htf": true,
+      "max_notional_usdt": 650,
+      "min_profit_exit": 0.02,
+      "near_exit_mult": 0.90,
+      "near_exit_alt": 0.017,
+      "pb_min_profit_gate": 0.019,
+      "runner_min_frac": 0.20,
+      "opp_stage_exit": {
+        "stage1_r": 0.30,
+        "stage1_reduce": 0.76,
+        "stage1_pullback_pct": 0.002,
+        "stage2_r": 0.98,
+        "stage2_reduce": 0.34,
+        "stage2_pullback_pct": 0.006,
+        "stage3_r": 1.85,
+        "stage3_reduce": 0.0,
+        "stage3_pullback_pct": 0.012,
+        "stage_timeout_minutes": 90.0,
+        "note": "stoploss 层三段落袋：默认需回撤 0.2%/0.6%/1.2% 后落袋，可调为 0 恢复旧版立即执行。"
+      },
+      "small_target_max_hold_minutes": 35,
+      "def_add_enable": true,
+      "def_add_min_dd_atr": 0.70,
+      "def_add_leg_frac": 0.06,
+      "def_add_max_profit": 0.005,
+      "hard_tp": 0.10,
+      "execution_slippage": {
+        "tighten_bps": 18.0,
+        "severe_bps": 30.0,
+        "risk_scale": 0.90,
+        "risk_scale_severe": 0.84,
+        "cap_share": 0.78,
+        "cap_share_severe": 0.68
+      },
+      "fill_slippage_adjust": {
+        "threshold": 0.05,
+        "lock_boost": 0.64,
+        "lock_boost_max": 1.48,
+        "target_penalty": 0.46,
+        "leg_penalty": 0.62,
+        "leg_floor": 0.58
+      },
+      "exit_tuning": {
+        "measured_move_r_mult": 1.323,
+        "measured_move_min_profit": 0.032,
+        "measured_move_lock_share": 0.66,
+        "measured_move_lock_min": 0.020,
+        "measured_move_risk_basis": "hybrid"
+      },
+      "expectation_guard_enable": true,
+      "expectation_target_r": 1.20,
+      "expectation_release_r": 0.40,
+      "expectation_release_floor_r": 0.30,
+      "expectation_drawdown_r": 0.10,
+      "expectation_relax_minutes": 52.0,
+      "expectation_log_cooldown": 8.0
+    },
+    "SOL/USDT:USDT": {
+      "strict_long_htf": false,
+      "strict_short_htf": true,
+      "max_notional_usdt": 520,
+      "min_profit_exit": 0.024,
+      "near_exit_mult": 0.90,
+      "near_exit_alt": 0.020,
+      "pb_min_profit_gate": 0.018,
+      "runner_min_frac": 0.20,
+      "opp_stage_exit": {
+        "stage1_r": 0.32,
+        "stage1_reduce": 0.80,
+        "stage1_pullback_pct": 0.002,
+        "stage2_r": 1.00,
+        "stage2_reduce": 0.40,
+        "stage2_pullback_pct": 0.006,
+        "stage3_r": 1.95,
+        "stage3_reduce": 0.05,
+        "stage3_pullback_pct": 0.012,
+        "stage_timeout_minutes": 85.0,
+        "note": "反向三段落袋统一走 stoploss 触发；默认需先回撤 0.2%/0.6%/1.2% 再执行，可调为 0 恢复旧版。"
+      },
+      "small_target_max_hold_minutes": 40,
+      "def_add_enable": true,
+      "def_add_min_dd_atr": 0.70,
+      "def_add_leg_frac": 0.08,
+      "def_add_max_profit": 0.005,
+      "hard_tp": 0.12,
+      "execution_slippage": {
+        "tighten_bps": 18.0,
+        "severe_bps": 32.0,
+        "risk_scale": 0.90,
+        "risk_scale_severe": 0.84,
+        "cap_share": 0.78,
+        "cap_share_severe": 0.68
+      },
+      "fill_slippage_adjust": {
+        "threshold": 0.05,
+        "lock_boost": 0.60,
+        "lock_boost_max": 1.46,
+        "target_penalty": 0.44,
+        "leg_penalty": 0.62,
+        "leg_floor": 0.57
+      },
+      "exit_tuning": {
+        "measured_move_r_mult": 1.256,
+        "measured_move_min_profit": 0.035,
+        "measured_move_lock_share": 0.64,
+        "measured_move_lock_min": 0.021,
+        "measured_move_risk_basis": "hybrid"
+      },
+      "expectation_guard_enable": true,
+      "expectation_target_r": 1.45,
+      "expectation_release_r": 0.48,
+      "expectation_release_floor_r": 0.32,
+      "expectation_release_floor_pct": 0.000,
+      "expectation_drawdown_r": 0.16,
+      "expectation_floor_max_r": 1.70,
+      "expectation_floor_escalate_at_r": 1.20,
+      "expectation_relax_minutes": 54.0,
+      "expectation_log_cooldown": 9.0,
+      "expectation_context_pad": 0.160
+    },
+    "BNB/USDT:USDT": {
+      "strict_long_htf": false,
+      "strict_short_htf": true,
+      "max_notional_usdt": 500,
+      "min_profit_exit": 0.024,
+      "near_exit_mult": 0.90,
+      "near_exit_alt": 0.020,
+      "pb_min_profit_gate": 0.018,
+      "scale_out_near_frac": 0.45,
+      "scale_out_exhaust_frac": 0.30,
+      "runner_min_frac": 0.20,
+      "opp_stage_exit": {
+        "stage1_r": 0.32,
+        "stage1_reduce": 0.80,
+        "stage1_pullback_pct": 0.002,
+        "stage2_r": 1.02,
+        "stage2_reduce": 0.42,
+        "stage2_pullback_pct": 0.006,
+        "stage3_r": 1.95,
+        "stage3_reduce": 0.05,
+        "stage3_pullback_pct": 0.012,
+        "stage_timeout_minutes": 85.0,
+        "note": "反向三段落袋统一走 stoploss；默认需先回撤 0.2%/0.6%/1.2% 才触发，可调为 0 恢复立即执行。"
+      },
+      "small_target_max_hold_minutes": 40,
+      "def_add_enable": true,
+      "def_add_min_dd_atr": 0.60,
+      "def_add_leg_frac": 0.06,
+      "def_add_max_profit": 0.005,
+      "hard_tp": 0.12,
+      "execution_slippage": {
+        "tighten_bps": 17.0,
+        "severe_bps": 30.0,
+        "risk_scale": 0.90,
+        "risk_scale_severe": 0.84,
+        "cap_share": 0.78,
+        "cap_share_severe": 0.68
+      },
+      "fill_slippage_adjust": {
+        "threshold": 0.05,
+        "lock_boost": 0.58,
+        "lock_boost_max": 1.44,
+        "target_penalty": 0.44,
+        "leg_penalty": 0.62,
+        "leg_floor": 0.57
+      },
+      "exit_tuning": {
+        "measured_move_r_mult": 1.229,
+        "measured_move_min_profit": 0.033,
+        "measured_move_lock_share": 0.63,
+        "measured_move_lock_min": 0.020,
+        "measured_move_narrow_r": 0.52,
+        "measured_move_balance_r": 1.04,
+        "measured_move_trend_r": 2.05,
+        "measured_move_risk_basis": "hybrid"
+      },
+      "expectation_guard_enable": true,
+      "expectation_target_r": 1.40,
+      "expectation_release_r": 0.48,
+      "expectation_release_floor_r": 0.32,
+      "expectation_release_floor_pct": 0.000,
+      "expectation_drawdown_r": 0.14,
+      "expectation_floor_max_r": 1.80,
+      "expectation_floor_escalate_at_r": 1.25,
+      "expectation_relax_minutes": 60.0,
+      "expectation_log_cooldown": 9.0,
+      "expectation_context_pad": 0.170
+    },
+    "DOGE/USDT:USDT": {
+      "strict_long_htf": false,
+      "strict_short_htf": true,
+      "max_notional_usdt": 460,
+      "min_profit_exit": 0.024,
+      "near_exit_mult": 0.90,
+      "near_exit_alt": 0.020,
+      "pb_min_profit_gate": 0.022,
+      "runner_min_frac": 0.20,
+      "opp_stage_exit": {
+        "stage1_r": 0.35,
+        "stage1_reduce": 0.82,
+        "stage1_pullback_pct": 0.002,
+        "stage2_r": 1.05,
+        "stage2_reduce": 0.45,
+        "stage2_pullback_pct": 0.006,
+        "stage3_r": 2.00,
+        "stage3_reduce": 0.08,
+        "stage3_pullback_pct": 0.012,
+        "stage_timeout_minutes": 80.0,
+        "note": "stoploss 分段锁盈，默认需先回撤 0.2%/0.6%/1.2% 才触发，可调为 0 兼容旧版立即执行。"
+      },
+      "small_target_max_hold_minutes": 35,
+      "def_add_enable": true,
+      "def_add_min_dd_atr": 0.72,
+      "def_add_leg_frac": 0.06,
+      "def_add_max_profit": 0.005,
+      "hard_tp": 0.12,
+      "execution_slippage": {
+        "tighten_bps": 16.0,
+        "severe_bps": 28.0,
+        "risk_scale": 0.88,
+        "risk_scale_severe": 0.82,
+        "cap_share": 0.76,
+        "cap_share_severe": 0.66
+      },
+      "fill_slippage_adjust": {
+        "threshold": 0.045,
+        "lock_boost": 0.68,
+        "lock_boost_max": 1.50,
+        "target_penalty": 0.48,
+        "leg_penalty": 0.68,
+        "leg_floor": 0.56
+      },
+      "exit_tuning": {
+        "measured_move_r_mult": 1.175,
+        "measured_move_min_profit": 0.031,
+        "measured_move_lock_share": 0.62,
+        "measured_move_lock_min": 0.019,
+        "measured_move_narrow_r": 0.50,
+        "measured_move_balance_r": 1.02,
+        "measured_move_trend_r": 1.96,
+        "measured_move_risk_basis": "hybrid"
+      },
+      "expectation_guard_enable": true,
+      "expectation_target_r": 1.15,
+      "expectation_release_r": 0.38,
+      "expectation_release_floor_r": 0.28,
+      "expectation_release_floor_pct": 0.000,
+      "expectation_drawdown_r": 0.10,
+      "expectation_floor_max_r": 1.40,
+      "expectation_floor_escalate_at_r": 1.00,
+      "expectation_relax_minutes": 44.0,
+      "expectation_log_cooldown": 7.0,
+      "expectation_context_pad": 0.130
+    }
+  },
+
+  "strategy_parameters": {
+    "data_governance": {
+      "review_export": {
+        "json": true,
+        "csv": true,
+        "dir": "docs/review_reports/analytics"
+      },
+      "data_freshness": {
+        "threshold_minutes": 35,            
+        "recheck_minutes": 6,              
+        "log_cooldown_minutes": 45          
+      }
+    },
+    "enable_short": true,                   
+    "preset": "conservative",               
+    "anchors": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
+    "anchor_weights": [0.6, 0.4],           
+    "tri_weights": { "dir": 0.45, "breadth": 0.45, "shock": 0.10 },
+    "global_softlock_strictness": 0.60,       
+    "exit_tuning": {
+      "lock_buffer_r_share": 0.18,
+      "micro_target_level": 0.004,
+      "micro_target_lock_ratio": 0.38,
+      "small_target_level": 0.04,
+      "small_target_lock_ratio": 0.55,
+      "small_target_max_hold_minutes": 40,
+      "opp_stage_exit": {
+        "stage1_r": 0.30,
+        "stage1_reduce": 0.78,
+        "stage1_pullback_pct": 0.002,
+        "stage2_r": 1.00,
+        "stage2_reduce": 0.38,
+        "stage2_pullback_pct": 0.006,
+        "stage3_r": 1.90,
+        "stage3_reduce": 0.0,
+        "stage3_pullback_pct": 0.012,
+        "stage_timeout_minutes": 90.0,
+        "note": "反向三段落袋已迁入 stoploss 层，默认需回撤 0.2%/0.6%/1.2% 后触发；设为 0 可恢复旧版直接落袋。"
+      },
+      "measured_move_level": "major",
+      "measured_move_risk_basis": "hybrid"
+    },
+
+    "struct_guard_stoploss": {
+      "enable": true,
+      "require_di_flip": true,
+      "block_stoprun": true,
+      "min_profit_pct": -0.004,
+      "align_cap": 0.28,
+      "note": "结构守卫（原 exit_shadow）改由 stoploss 执行：DI 反转 + 结构破位且无长影线 stoprun 时触发，可在弱对齐时提前落袋；设 align_cap=1 或关闭对应开关可放宽。"
+    },
+
+    "exchange_profile_override": {
+      "align_floor_short": 0.24,
+      "mania_align_need": 0.18,
+      "panic_align_need": 0.06,
+      "entry_cooldown_mult": 1.22
+    },
+
+    "limit_entry_plan": {
+      "enable": false,
+      "price_offset_bps": 0,
+      "max_queue_ms": 0,
+      "fallback": "market",
+      "rebid_max": 0,
+      "rebid_cooldown_ms": 0,
+      "slippage_cap_bps": 0,
+      "decoy": {
+        "enable": false,
+        "order_size_pct": 0.0,
+        "max_decoys": 0,
+        "cooldown_ms": 0,
+        "max_gross_pct": 0.0
+      },
+      "note": "限价/诱饵方案草案：默认关闭保持市价；price_offset_bps 相对最优/中间价偏移，max_queue_ms 为排队超时，fallback=market 表示未成交转市价；decoy.* 控制小额诱饵单频率与总额上限。暂未接入策略逻辑，仅供后续调研。"
+    },
+
+    "entry_quality": {
+      "base_need": 0.68,
+      "slow_need": 0.72,
+      "fast_need": 0.77,
+      "price_floor": 0.28,
+      "price_ceil": 0.72,
+      "price_weight": 0.20,
+      "dynamic_add": 0.034,
+      "fragile_add": 0.052,
+      "extreme_add": 0.07,
+      "decay_add": 0.034,
+      "need_buffer": 0.022,
+      "need_buffer_fast_mult": 0.42,
+      "need_buffer_slow_mult": 0.88,
+      "need_buffer_extreme_mult": 0.42,
+      "pass_ratio_min": 1.05,                 
+      "pass_ratio_fast_min": 1.04,            
+      "pass_ratio_slow_min": 1.06,            
+      "pass_ratio_extreme_min": 1.08,         
+      "long": {
+        "price_ceil": 0.70,
+        "fast_need": 0.79,
+        "extreme_add": 0.074,
+        "need_buffer": 0.02,
+        "need_buffer_extreme_mult": 0.32
+      },
+      "short": {
+        "price_floor": 0.74,
+        "price_weight": 0.32,
+        "base_need": 0.75,
+        "slow_need": 0.78,
+        "fast_need": 0.82,
+        "dynamic_add": 0.045,
+        "fragile_add": 0.06,
+        "extreme_add": 0.082,
+        "decay_add": 0.04,
+        "prefer_relief": 0.004,
+        "need_buffer": 0.032,
+        "need_buffer_fast_mult": 0.32,
+        "need_buffer_extreme_mult": 0.44
+      }
+    },
+
+    "signal_filters": {
+      "enable": true,
+      "strength_threshold": 0.35,
+      "volume_filter": 0.9,
+      "multi_tf_enable": true,
+      "multi_tf_weight": 0.40,
+      "depth_enable": true,
+      "depth_weight": 0.30,
+      "orderbook_imbalance_need": 0.08,
+      "flow_rate_need": 0.05,
+      "exit_cluster_enable": true,
+      "exit_cluster_weight": 0.12,
+      "exit_cluster_window": 48,
+      "exit_cluster_min": 0.02,
+      "note": "默认开启质量/盘口拦截：质量<0.35 或量能<0.9 会被拒单；multi_tf/depth_* 权重分别 0.40/0.30，盘口偏倚需 |OB|≥0.08 且流速≥0.05。exit_cluster_* 默认开启为反向观察加分，window=48 根内统计止损/止盈扎堆，超过 min=0.02 时按 weight=0.12 加分且无密度不降权，可在 pair_overrides 调整或关闭。"
+    },
+
+    "entry_price_guard": {
+      "default": {
+        "long": {
+          "max": { "price_position": 0.70, "price_pos_60": 0.66, "price_pos_240": 0.62 },
+          "core": { "price_position": 0.50, "price_pos_60": 0.48, "price_pos_240": 0.46 },
+          "vwap_max": 0.012
+        },
+        "short": {
+          "min": { "price_position": 0.34, "price_pos_60": 0.38, "price_pos_240": 0.42 },
+          "core": { "price_position": 0.50, "price_pos_60": 0.52, "price_pos_240": 0.56 },
+          "vwap_min": 0.008
+        },
+        "vwap_window": 288
+      }
+    },
+
+    "directional_guard": {
+      "enable": true,
+      "short_max_ratio": 0.05,
+      "short_lookback_minutes": 1440,
+      "short_min_long": 10,
+      "short_mania_override": false,
+      "short_price_override_floor": 0.86
+    },
+
+    "daily_profit_cap": {
+      "enable": true,
+      "target_pct": 0.04,
+      "basis": "available",
+      "target_abs": 120.0,
+      "tz_offset_hours": 8,
+      "note": "默认开启按北京时间分日的盈利封顶：日盈利达到可用余额 4% 或 120 USDT（取更紧者）即当日休息，仅保留止盈止损；调高/调低 target_pct 或 target_abs 可放松/收紧节奏，设为 0 或 enable=false 可回退旧版不封顶。"
+    },
+
+    "pyramiding": {
+      "max_add_amount": 160.0,
+      "max_add_pct": 0.22,
+      "max_position_pct": 0.55,
+      "note": "默认开启防重仓：单次加仓≤160 USDT 且≤22% 可用余额，总仓位≤55% 可用/总余额；均基于钱包实际余额（未乘杠杆）的保证金占用来计算，不以名义仓位计。可按账户体量调整，设为 0 可恢复旧版无限制。"
+    },
+
+    "account_notional_override": {
+      "leverage": 20,
+      "reserve_ratio": 0.1,
+      "reserve_static": 3.0,
+      "fee_rate": 0.0005,
+      "funding_rate": 0.0001,
+      "funding_horizon_hours": 8,
+      "min_cap": 120,
+      "min_cap_ratio": 0.18,
+      "max_cap": 1850,
+      "balance_tiers": [
+        { "label": "micro", "max_total": 60, "min_cap": 85, "free_ratio": 0.24, "total_ratio": 0.12 },
+        { "label": "compact", "max_total": 120, "min_cap": 105, "free_ratio": 0.26, "total_ratio": 0.16 },
+        { "label": "lean", "max_total": 250, "min_cap": 140, "free_ratio": 0.28, "total_ratio": 0.18 },
+        { "label": "steady", "max_total": 600, "min_cap": 220, "free_ratio": 0.34, "total_ratio": 0.22 },
+        { "label": "growth", "max_total": 2000, "min_cap": 240, "free_ratio": 0.31, "total_ratio": 0.21, "max_cap": 1600 },
+        { "label": "mature", "max_total": 6000, "min_cap": 280, "free_ratio": 0.29, "total_ratio": 0.19, "max_cap": 1750 },
+        { "label": "pro", "max_total": 16000, "min_cap": 320, "free_ratio": 0.27, "total_ratio": 0.18, "max_cap": 1850 }
+      ],
+      "pair_balance_caps": [
+        {
+          "label": "micro_pair_caps",
+          "max_total": 120,
+          "caps": {
+            "default": 420,
+            "BTC/USDT:USDT": 500,
+            "ETH/USDT:USDT": 380,
+            "SOL/USDT:USDT": 340,
+            "BNB/USDT:USDT": 340,
+            "DOGE/USDT:USDT": 300
+          }
+        },
+        {
+          "label": "compact_pair_caps",
+          "max_total": 250,
+          "caps": {
+            "default": 560,
+            "BTC/USDT:USDT": 620,
+            "ETH/USDT:USDT": 500,
+            "SOL/USDT:USDT": 460,
+            "BNB/USDT:USDT": 440,
+            "DOGE/USDT:USDT": 400
+          }
+        }
+      ]
+    },
+
+    "execution_slippage": {
+      "window": 14,
+      "tighten_bps": 18.0,
+      "severe_bps": 32.0,
+      "risk_scale": 0.92,
+      "risk_scale_severe": 0.86,
+      "cost_boost": 1.05,
+      "cost_boost_severe": 1.12,
+      "cap_share": 0.82,
+      "cap_share_severe": 0.72
+    },
+
+    "fill_slippage_adjust": {
+      "threshold": 0.06,
+      "lock_boost": 0.55,
+      "lock_boost_max": 1.42,
+      "target_penalty": 0.42,
+      "leg_penalty": 0.60,
+      "leg_floor": 0.58
+    },
+
+    "reflexivity_energy_profile": {
+      "panic_tail_threshold": 0.68,
+      "blowoff_tail_threshold": 0.65,
+      "energy_decay_minutes": 18
+    },
+
+    "cluster_window_minutes": 24,
+    "cluster_max_signals": 2,
+
+    "macro_event_windows": [
+      {
+        "label": "FOMC",
+        "start": "2024-09-18T17:30:00Z",
+        "end": "2024-09-18T20:30:00Z",
+        "bias": "flat"
+      },
+      {
+        "label": "OptionsExpiry",
+        "start": "2024-09-27T08:00:00Z",
+        "duration_minutes": 240,
+        "bias": "tight"
+      }
+    ],
+
+    "session_timezone_offset_hours": 8,
+    "session_biases": [
+      { "label": "asia", "start": 7, "end": 15, "tri_mult": 1.05, "dist_mult": 1.05, "add_mult": 1.10, "bias": "calm", "block_entries": false, "block_adds": false },
+      { "label": "europe", "start": 15, "end": 20, "tri_mult": 1.00, "dist_mult": 1.00, "add_mult": 1.00, "bias": "balanced", "block_entries": false, "block_adds": false },
+      { "label": "us", "start": 24, "end": 7, "tri_mult": 0.10, "dist_mult": 0.10, "add_mult": 0.0, "bias": "volatile", "block_entries": true, "block_adds": true }
+    ],
+
+    "dynamic_pairlist": {
+      "enable": true,
+      "mode": "focus",
+      "limit": 6,
+      "refresh_minutes": 30,
+      "min_change": 3.0,
+      "min_quote": 800000.0,
+      "respect_whitelist": true,
+      "allow_held": true
+    },
+
+    "webui_plot_profile": "balanced",
+    "log_decisions": true,
+    "log_decisions_level": "info"
+  }
+}
