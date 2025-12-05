@@ -19,3 +19,12 @@ target
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# Local logging artifacts
+logs/
+w2uos_logs.db
+
+# Dashboard build outputs
+w2uos-dashboard/dist/
+w2uos-dashboard/pkg/
+w2uos-dashboard/node_modules/

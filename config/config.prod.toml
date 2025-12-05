@@ -1,0 +1,9 @@
+# Production overrides
+[api]
+[[api.users]]
+id = "prod-admin"
+role = "Admin"
+api_key_hash = "037abd8d694c16d602ff30594e60fc492ba3f44704bf96211deeda26d5df851c"
+
+[logging]
+level = "warn"

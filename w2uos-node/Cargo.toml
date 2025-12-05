@@ -1,0 +1,26 @@
+[package]
+name = "w2uos-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+actix-rt = "2.11"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+w2uos-bus = { path = "../w2uos-bus" }
+w2uos-data = { path = "../w2uos-data" }
+w2uos-exec = { path = "../w2uos-exec" }
+w2uos-kernel = { path = "../w2uos-kernel" }
+w2uos-config = { path = "../w2uos-config" }
+w2uos-log = { path = "../w2uos-log" }
+w2uos-api = { path = "../w2uos-api" }
+w2uos-net = { path = "../w2uos-net" }
+w2uos-service = { path = "../w2uos-service" }
+w2uos-backtest = { path = "../w2uos-backtest" }
+wru-strategy = { path = "../wru-strategy" }

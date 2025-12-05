@@ -1,0 +1,22 @@
+[package]
+name = "w2uos-log"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+chrono = { version = "0.4", features = ["serde", "clock"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-rustls", "any", "chrono", "sqlite", "postgres"] }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = "0.2"
+w2uos-bus = { path = "../w2uos-bus" }
+w2uos-service = { path = "../w2uos-service" }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tempfile = "3.10"

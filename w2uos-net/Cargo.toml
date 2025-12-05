@@ -1,0 +1,12 @@
+[package]
+name = "w2uos-net"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "macros"] }
+rand = "0.8"
+tracing = { workspace = true }

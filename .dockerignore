@@ -1,0 +1,8 @@
+target
+**/target
+**/node_modules
+w2uos-dashboard/dist
+w2uos-dashboard/pkg
+.git
+.gitignore
+Dockerfile

@@ -1,0 +1,9 @@
+# Development overrides
+[api]
+[[api.users]]
+id = "dev"
+role = "Admin"
+api_key_hash = "7e9f8fd111802be56c379d597842e29b2cebd35ff2133d431a49fa556a18704e"
+
+[logging]
+level = "debug"
