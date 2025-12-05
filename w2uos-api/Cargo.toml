@@ -1,0 +1,33 @@
+[package]
+name = "w2uos-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+actix = "0.13"
+actix-rt = "2.11"
+actix-web = "4.5"
+actix-web-actors = "4.2"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+anyhow.workspace = true
+futures-util = "0.3"
+sha2 = "0.10"
+subtle = "2"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing = "0.1"
+w2uos-bus = { path = "../w2uos-bus" }
+w2uos-exec = { path = "../w2uos-exec" }
+w2uos-data = { path = "../w2uos-data" }
+w2uos-kernel = { path = "../w2uos-kernel" }
+w2uos-log = { path = "../w2uos-log" }
+w2uos-net = { path = "../w2uos-net" }
+w2uos-backtest = { path = "../w2uos-backtest" }
+w2uos-config = { path = "../w2uos-config" }
+
+[dev-dependencies]
+actix-rt = "2.9"
+actix-web = { version = "4.5", features = ["macros"] }
+async-trait = { workspace = true }

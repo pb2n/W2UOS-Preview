@@ -1,0 +1,9 @@
+# Staging overrides
+[api]
+[[api.users]]
+id = "stage-admin"
+role = "Admin"
+api_key_hash = "4b4e08d24c2a2c8bfdfd320d05a7391f35e98f5d72fd2da47b6bb70bcfea7d93"
+
+[logging]
+level = "info"

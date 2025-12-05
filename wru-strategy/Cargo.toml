@@ -1,0 +1,12 @@
+[package]
+name = "wru-strategy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+w2uos-data = { path = "../w2uos-data" }
+w2uos-exec = { path = "../w2uos-exec" }
+w2uos-service = { path = "../w2uos-service" }

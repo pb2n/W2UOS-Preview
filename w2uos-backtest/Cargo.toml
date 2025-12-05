@@ -1,0 +1,24 @@
+[package]
+name = "w2uos-backtest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { version = "0.4", features = ["serde", "clock"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+w2uos-bus = { path = "../w2uos-bus" }
+w2uos-data = { path = "../w2uos-data" }
+w2uos-log = { path = "../w2uos-log" }
+w2uos-service = { path = "../w2uos-service" }
+w2uos-exec = { path = "../w2uos-exec" }
+
+[dev-dependencies]
+w2uos-kernel = { path = "../w2uos-kernel" }
+wru-strategy = { path = "../wru-strategy" }
+tempfile = "3.10"

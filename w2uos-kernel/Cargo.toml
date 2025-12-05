@@ -1,0 +1,22 @@
+[package]
+name = "w2uos-kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+w2uos-bus = { path = "../w2uos-bus" }
+w2uos-data = { path = "../w2uos-data" }
+w2uos-exec = { path = "../w2uos-exec" }
+w2uos-log = { path = "../w2uos-log" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+wru-strategy = { path = "../wru-strategy" }
+w2uos-service = { path = "../w2uos-service" }
+w2uos-config = { path = "../w2uos-config" }
+chrono = { version = "0.4", features = ["serde", "clock"] }

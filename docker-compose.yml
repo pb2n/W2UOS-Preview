@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  w2uos:
+    build: .
+    image: w2uos:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=dev
+      - W2UOS_CONFIG_PATH=/etc/w2uos/config.toml
+      - W2UOS_API_KEY=${W2UOS_API_KEY:-dev-key}
+      - W2UOS_HISTORY_URL=${W2UOS_HISTORY_URL:-sqlite:///var/lib/w2uos/history.db}
+    volumes:
+      - ./config/config.toml:/etc/w2uos/config.toml:ro
+      - ./config/config.dev.toml:/etc/w2uos/config.dev.toml:ro
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: w2uos
+      POSTGRES_PASSWORD: w2uos
+      POSTGRES_DB: w2uos
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # nats:
+  #   image: nats:2-alpine
+  #   ports:
+  #     - "4222:4222"
+  #   command: ["-js"]
+
+volumes:
+  postgres_data:

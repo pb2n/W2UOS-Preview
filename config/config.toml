@@ -1,0 +1,52 @@
+net_profile = { mode = "Direct", request_jitter_ms = [10, 60], max_parallel_requests_per_target = 4, connection_reuse_policy = "RandomReuse" }
+node_id = "w2uos-node"
+node_role = "AllInOne"
+kernel_mode = "Live"
+
+[logging]
+level = "info"
+log_path = "logs"
+
+[api]
+bind = "0.0.0.0:8080"
+[[api.users]]
+id = "admin"
+role = "Admin"
+api_key_hash = "7e9f8fd111802be56c379d597842e29b2cebd35ff2133d431a49fa556a18704e"
+
+[market_data]
+mode = "Simulated"
+
+[market_data.net_profile]
+mode = "Direct"
+request_jitter_ms = [5, 20]
+max_parallel_requests_per_target = 2
+connection_reuse_policy = "AlwaysReuse"
+
+[[market_data.subscriptions]]
+exchange = "Okx"
+symbol = { base = "BTC", quote = "USDT" }
+ws_url = "wss://ws.okx.com:8443/ws/v5/public"
+
+[execution]
+initial_balance_usdt = 100000
+live_trading_enabled = false
+
+[execution.net_profile]
+mode = "Direct"
+request_jitter_ms = [5, 15]
+max_parallel_requests_per_target = 1
+connection_reuse_policy = "RandomReuse"
+
+[strategy.bot_config]
+name = "default-bot"
+pairs = [
+    { exchange = "Okx", symbol = { base = "BTC", quote = "USDT" } },
+]
+
+[global_risk]
+max_daily_loss_pct = 5.0
+max_daily_loss_abs = 10000.0
+max_total_notional = 250000.0
+max_open_positions = 25
+max_error_rate_per_minute = 10.0
