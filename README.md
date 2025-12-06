@@ -1,5 +1,7 @@
 # W2UOS — Web3 Unified Operating System for Quantitative Trading
 
+<img width="1024" height="1024" alt="Logo" src="https://github.com/user-attachments/assets/b2acd7b3-e739-4d21-be2d-11c98bb0310a" />
+
 W2UOS is a Rust-native, modular, high-performance trading operating system designed to support the full lifecycle of quantitative trading systems, from simulation and backtesting to live exchange execution, with privacy, extensibility, and distributed deployment as first-class objectives.
 
 ---
