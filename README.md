@@ -152,3 +152,6 @@ See the LICENSE and NOTICE files for full legal terms.
 Author: pb_2n^ (孔穆清)  
 GitHub: https://github.com/pb2n  
 Project Repository: https://github.com/pb2n/W2UOS  
+
+The historical Python strategy files previously included in this repository are published for academic and reference purposes only.
+All commercial use, derivative trading systems, or production deployment based on these strategies require explicit written authorization from the author.
