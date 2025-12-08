@@ -48,6 +48,36 @@ README.md
 
 ---
 
+flowchart LR
+  Client[Client / Tools]
+  subgraph Node["W2UOS Node"]
+    API["w2uos-api\n(REST / future WS)"]
+    Kernel["w2uos-kernel\n(service registry & bus)"]
+    Config["config service"]
+    Market["market-data service"]
+    Strategy["strategy service"]
+    Risk["risk service"]
+    Exec["execution service"]
+    Log["log service"]
+  end
+  DB[SQLite\nlog_events / trades / latency]
+  Exchange[OKX / other exchanges]
+
+  Client <--> API
+  API <--> Kernel
+  Kernel --> Config
+  Kernel --> Market
+  Kernel --> Strategy
+  Kernel --> Risk
+  Kernel --> Exec
+  Kernel --> Log
+  Market --> Kernel
+  Exec --> Exchange
+  Log --> DB
+  Exec --> DB
+
+---
+
 ## 4. Quick Start
 
 ### 4.1 Prerequisites
