@@ -2,6 +2,11 @@
 
 W2UOS is a Rust-native, modular, high-performance trading operating system designed to support the full lifecycle of quantitative trading systems, from simulation and backtesting to live exchange execution, with privacy, extensibility, and distributed deployment as first-class objectives.
 
+🚧 This is a Preview / Architecture Demonstration Repository
+
+This repository is a preview and architectural demonstration version of W2UOS.
+It does not contain full live trading logic, private execution modules, or production credentials. 
+
 ---
 
 ## 1. Overview
@@ -185,3 +190,5 @@ Project Repository: https://github.com/pb2n/W2UOS
 
 The historical Python strategy files previously included in this repository are published for academic and reference purposes only.
 All commercial use, derivative trading systems, or production deployment based on these strategies require explicit written authorization from the author.
+
+
