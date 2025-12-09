@@ -4,6 +4,9 @@ W2UOS is a Rust-native, modular, high-performance trading operating system desig
 
 🚧 This is a Preview / Architecture Demonstration Repository
 
+Any production deployment, commercial service, or derivative trading system
+based on this preview requires separate authorization.
+
 This repository is a preview and architectural demonstration version of W2UOS.
 It does not contain full live trading logic, private execution modules, or production credentials. 
 
@@ -177,6 +180,15 @@ Author: pb_2n^ (孔穆清)
 
 Commercial use is permitted under the terms of the license.  
 Proper attribution to the original author and project must be retained in all derived works.
+
+Logo and Branding Notice
+
+The W2UOS name and logo are part of the W2UOS project identity.
+Any use of the W2UOS logo outside of this repository must include
+clear attribution to the original author.
+
+Commercial use of the W2UOS logo is not permitted without
+explicit written authorization from the author.
 
 See the LICENSE and NOTICE files for full legal terms.
 
