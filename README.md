@@ -112,8 +112,13 @@ REST API: http://localhost:8080
 Health check:  
 curl http://localhost:8080/health  
 
-Authenticated status query:  
-curl -H "X-API-KEY: your-secret-key" http://localhost:8080/status  
+Authenticated status query:
+curl -H "X-API-KEY: your-secret-key" http://localhost:8080/status
+
+LIVE-3 live + paper trading visibility (read-only, requires `X-API-KEY`):
+- Live status: `curl -H "X-API-KEY: your-secret-key" http://localhost:8080/live/status`
+- Paper positions: `curl -H "X-API-KEY: your-secret-key" http://localhost:8080/live/positions`
+- Recent paper orders: `curl -H "X-API-KEY: your-secret-key" "http://localhost:8080/live/orders?limit=100"`
 
 Live trading is disabled by default.
 

@@ -3,16 +3,99 @@ use std::sync::Arc;
 use anyhow::Result;
 use w2uos_backtest::{BacktestConfig, BacktestCoordinator};
 use w2uos_bus::MessageBus;
-use w2uos_data::{ExchangeId, Symbol};
+use w2uos_data::TradingMode;
+use w2uos_data::{ExchangeId, MarketSnapshot, Symbol};
 use w2uos_exec::ExecutionService;
 use w2uos_kernel::{ClusterService, Kernel, KernelState, RiskSupervisorService};
 use w2uos_log::{types::LogEvent, LogService};
 use w2uos_net::NetProfile;
 
 use crate::types::{
-    ClusterNodeDto, LatencyBucketDto, LatencySummaryDto, LogDto, NodeStatusDto, PositionDto,
-    ServiceStatusDto,
+    ClusterNodeDto, LatencyBucketDto, LatencySummaryDto, LiveOrderDto, LiveStatusDto, LogDto,
+    NodeStatusDto, PositionDto, ServiceStatusDto,
 };
+
+#[derive(Clone)]
+pub struct LivePipelineState {
+    last_snapshot: Arc<tokio::sync::Mutex<Option<MarketSnapshot>>>,
+    trades: Arc<tokio::sync::Mutex<Vec<LiveOrderDto>>>,
+    symbols: Vec<String>,
+}
+
+impl LivePipelineState {
+    pub fn new(symbols: Vec<String>) -> Self {
+        Self {
+            last_snapshot: Arc::new(tokio::sync::Mutex::new(None)),
+            trades: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            symbols,
+        }
+    }
+
+    pub fn start_listeners(&self, bus: Arc<dyn MessageBus>, subjects: Vec<String>) {
+        let last_snapshot = Arc::clone(&self.last_snapshot);
+        let symbol_filter = self.symbols.clone();
+        tokio::spawn(async move {
+            for subject in subjects {
+                let mut sub = match bus.subscribe(&subject).await {
+                    Ok(sub) => sub,
+                    Err(_) => continue,
+                };
+
+                let last_snapshot = Arc::clone(&last_snapshot);
+                let symbol_filter = symbol_filter.clone();
+                tokio::spawn(async move {
+                    while let Some(msg) = sub.receiver.recv().await {
+                        if let Ok(snapshot) = serde_json::from_slice::<MarketSnapshot>(&msg.0) {
+                            if symbol_filter.is_empty()
+                                || symbol_filter.iter().any(|sym| {
+                                    sym.eq_ignore_ascii_case(&format!(
+                                        "{}-{}",
+                                        snapshot.symbol.base, snapshot.symbol.quote
+                                    ))
+                                })
+                            {
+                                let mut guard = last_snapshot.lock().await;
+                                *guard = Some(snapshot);
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        let trades_state = Arc::clone(&self.trades);
+        tokio::spawn(async move {
+            if let Ok(mut sub) = bus.subscribe("log.trade").await {
+                while let Some(msg) = sub.receiver.recv().await {
+                    if let Ok(trade) = serde_json::from_slice::<w2uos_log::TradeRecord>(&msg.0) {
+                        let mut guard = trades_state.lock().await;
+                        guard.push(trade.into());
+                        if guard.len() > 200 {
+                            let excess = guard.len() - 200;
+                            guard.drain(0..excess);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    pub async fn last_snapshot(&self) -> Option<MarketSnapshot> {
+        let guard = self.last_snapshot.lock().await;
+        guard.clone()
+    }
+
+    pub async fn recent_trades(&self, limit: usize) -> Vec<LiveOrderDto> {
+        let guard = self.trades.lock().await;
+        let len = guard.len();
+        let start = len.saturating_sub(limit);
+        guard[start..].to_vec()
+    }
+
+    pub fn subscribed_symbols(&self) -> &[String] {
+        &self.symbols
+    }
+}
 
 #[derive(Clone)]
 pub struct ApiContext {
@@ -25,6 +108,10 @@ pub struct ApiContext {
     pub market_subjects: Vec<String>,
     pub net_profile: NetProfile,
     pub risk_service: Option<Arc<RiskSupervisorService>>,
+    pub trading_mode: TradingMode,
+    pub armed_exchanges: Vec<String>,
+    pub exchange_profile: Option<(String, String)>,
+    pub live_state: LivePipelineState,
 }
 
 impl ApiContext {
@@ -38,7 +125,14 @@ impl ApiContext {
         market_subjects: Vec<String>,
         net_profile: NetProfile,
         risk_service: Option<Arc<RiskSupervisorService>>,
+        trading_mode: TradingMode,
+        armed_exchanges: Vec<String>,
+        exchange_profile: Option<(String, String)>,
+        subscribed_symbols: Vec<String>,
     ) -> Self {
+        let live_state = LivePipelineState::new(subscribed_symbols);
+        live_state.start_listeners(Arc::clone(&bus), market_subjects.clone());
+
         Self {
             kernel,
             bus,
@@ -49,6 +143,10 @@ impl ApiContext {
             market_subjects,
             net_profile,
             risk_service,
+            trading_mode,
+            armed_exchanges,
+            exchange_profile,
+            live_state,
         }
     }
 
@@ -63,6 +161,8 @@ impl ApiContext {
         Ok(NodeStatusDto {
             kernel_state: format!("{:?}", state),
             kernel_mode: format!("{:?}", self.kernel.mode()),
+            trading_mode: format!("{:?}", self.trading_mode),
+            armed_exchanges: self.armed_exchanges.clone(),
             services,
         })
     }
@@ -189,5 +289,33 @@ impl ApiContext {
 
     pub fn get_net_profile(&self) -> NetProfile {
         self.net_profile.clone()
+    }
+
+    pub async fn live_status(&self) -> Result<LiveStatusDto> {
+        let last_snapshot = self.live_state.last_snapshot().await;
+        let last_ts = last_snapshot.as_ref().map(|snap| snap.ts);
+        let connected = last_ts
+            .map(|ts| (chrono::Utc::now() - ts) < chrono::Duration::seconds(30))
+            .unwrap_or(false);
+        let (exchange_name, exchange_mode) = self
+            .exchange_profile
+            .clone()
+            .unwrap_or_else(|| ("unknown".to_string(), "unknown".to_string()));
+
+        Ok(LiveStatusDto {
+            exchange: exchange_name,
+            mode: exchange_mode,
+            symbols: self.live_state.subscribed_symbols().to_vec(),
+            market_connected: connected,
+            last_snapshot_ts: last_ts,
+        })
+    }
+
+    pub async fn live_orders(&self, limit: usize) -> Result<Vec<LiveOrderDto>> {
+        Ok(self.live_state.recent_trades(limit).await)
+    }
+
+    pub async fn live_positions(&self) -> Result<Vec<PositionDto>> {
+        self.get_positions().await
     }
 }

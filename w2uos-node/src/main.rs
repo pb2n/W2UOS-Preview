@@ -11,14 +11,16 @@ use w2uos_api::{
 };
 use w2uos_backtest::{BacktestConfig, BacktestCoordinator, BacktestKernelService};
 use w2uos_bus::{BusMessage, LocalBus, MessageBus};
-use w2uos_config::{ExchangeConfig, ExchangeKind, NodeConfig};
+use w2uos_config::{ExchangeConfig, ExchangeMode, NodeConfig};
 use w2uos_data::{
-    DataMode, ExchangeId, HistoricalStore, MarketDataKernelService, MarketDataService,
-    MarketSnapshot, Symbol,
+    okx::instrument_to_symbol, ExchangeDataConfig, ExchangeDataMode, ExchangeId, HistoricalStore,
+    MarketDataKernelService, MarketDataService, MarketDataSubscription, MarketSnapshot, Symbol,
+    TradingMode,
 };
 use w2uos_exec::{
-    ExecutionConfig as ExecCfg, ExecutionKernelService, ExecutionMode, ExecutionService,
-    OkxCredentials, OkxExecutionConfig, OrderCommand, OrderResult, OrderSide, OrderType,
+    BinanceCredentials, BinanceExecutionConfig, ExecutionConfig as ExecCfg, ExecutionKernelService,
+    ExecutionService, OkxCredentials, OkxExecutionConfig, OrderCommand, OrderResult, OrderSide,
+    OrderType, PaperExecutionConfig,
 };
 use w2uos_kernel::{
     ClusterService, ConfigManagerService, Kernel, KernelMode, NodeId, NodeRole,
@@ -136,32 +138,86 @@ async fn main() -> Result<()> {
     let mut config = node_config.market_data.clone();
     config.net_profile = node_config.net_profile.clone();
     config.history = history_config.clone();
-    let okx_exchange: Option<ExchangeConfig> = node_config
-        .exchanges
-        .iter()
-        .find(|ex| ex.kind == ExchangeKind::Okx && ex.credentials.is_some())
-        .cloned()
-        .or_else(|| {
-            node_config
-                .exchanges
-                .iter()
-                .find(|ex| ex.kind == ExchangeKind::Okx)
-                .cloned()
+    let exchange_cfg: Option<ExchangeConfig> = node_config.exchange.clone();
+    let exchange_data_cfg: Option<ExchangeDataConfig> =
+        exchange_cfg.as_ref().map(|ex| ExchangeDataConfig {
+            name: ex.name.clone(),
+            mode: match ex.mode {
+                ExchangeMode::Simulation => ExchangeDataMode::Simulation,
+                ExchangeMode::LivePaper => ExchangeDataMode::LivePaper,
+                ExchangeMode::LiveReal => ExchangeDataMode::LiveReal,
+            },
+            ws_public_url: ex.ws_public_url.clone(),
         });
 
-    if matches!(config.mode, DataMode::LiveOkx)
-        || (matches!(config.mode, DataMode::Simulated)
-            && node_config.execution.live_trading_enabled)
-    {
-        if let Some(okx_cfg) = &okx_exchange {
-            for sub in &mut config.subscriptions {
-                if matches!(sub.exchange, ExchangeId::Okx) {
-                    sub.ws_url = okx_cfg.ws_public_url.clone();
-                }
+    if config.subscriptions.is_empty() && !config.symbols.is_empty() {
+        for inst_id in &config.symbols {
+            if let Some(symbol) = instrument_to_symbol(inst_id) {
+                let ws_url = exchange_data_cfg
+                    .as_ref()
+                    .map(|ex| ex.ws_public_url.clone())
+                    .unwrap_or_default();
+
+                config.subscriptions.push(MarketDataSubscription {
+                    exchange: ExchangeId::Okx,
+                    symbol,
+                    ws_url,
+                });
+            } else {
+                warn!(
+                    inst_id = inst_id,
+                    "unable to parse instrument id from config; skipping"
+                );
             }
-            config.mode = DataMode::LiveOkx;
         }
     }
+
+    let mut trading_mode = node_config.execution.mode.clone();
+    if trading_mode != node_config.market_data.mode {
+        warn!("execution and market data modes differed; using execution mode");
+    }
+
+    if !node_config.execution.live_trading_enabled
+        && !matches!(trading_mode, TradingMode::Simulated)
+    {
+        warn!("live trading disabled; falling back to simulated mode");
+        trading_mode = TradingMode::Simulated;
+    }
+
+    match trading_mode {
+        TradingMode::LiveOkx => {
+            if let Some(okx_cfg) = exchange_data_cfg
+                .as_ref()
+                .filter(|ex| ex.name.eq_ignore_ascii_case("okx"))
+            {
+                for sub in &mut config.subscriptions {
+                    if matches!(sub.exchange, ExchangeId::Okx) {
+                        sub.ws_url = okx_cfg.ws_public_url.clone();
+                    }
+                }
+            } else {
+                warn!("OKX mode requested but exchange config missing; using simulated");
+                trading_mode = TradingMode::Simulated;
+            }
+        }
+        TradingMode::LiveBinance => {
+            if let Some(binance_cfg) = exchange_cfg
+                .as_ref()
+                .filter(|ex| ex.name.eq_ignore_ascii_case("binance"))
+            {
+                for sub in &mut config.subscriptions {
+                    if matches!(sub.exchange, ExchangeId::Binance) {
+                        sub.ws_url = binance_cfg.ws_public_url.clone();
+                    }
+                }
+            } else {
+                warn!("Binance mode requested but exchange config missing; using simulated");
+                trading_mode = TradingMode::Simulated;
+            }
+        }
+        TradingMode::Simulated => {}
+    }
+    config.mode = trading_mode.clone();
 
     let market_subjects: Vec<String> = config
         .subscriptions
@@ -175,6 +231,21 @@ async fn main() -> Result<()> {
             )
         })
         .collect();
+    let subscribed_symbols: Vec<String> = if !config.symbols.is_empty() {
+        config.symbols.clone()
+    } else {
+        config
+            .subscriptions
+            .iter()
+            .map(|sub| {
+                format!(
+                    "{}-{}",
+                    sub.symbol.base.to_uppercase(),
+                    sub.symbol.quote.to_uppercase()
+                )
+            })
+            .collect()
+    };
 
     let history_store = if let Some(conn) = history_config
         .as_ref()
@@ -190,8 +261,10 @@ async fn main() -> Result<()> {
         .map(|store| Arc::new(BacktestCoordinator::new(store.clone(), Arc::clone(&bus))));
 
     if kernel_mode == KernelMode::Live {
-        let market_service =
-            Arc::new(MarketDataService::new(Arc::clone(&bus), config.clone()).await?);
+        let market_service = Arc::new(
+            MarketDataService::new(Arc::clone(&bus), config.clone(), exchange_data_cfg.clone())
+                .await?,
+        );
         let market_kernel_service = Arc::new(MarketDataKernelService::new(
             "market-data".to_string(),
             Arc::clone(&market_service),
@@ -229,33 +302,83 @@ async fn main() -> Result<()> {
     }
 
     let mut exec_config: ExecCfg = node_config.execution.clone();
+    exec_config.mode = trading_mode.clone();
+    exec_config.paper_trading = matches!(
+        exchange_cfg.as_ref().map(|ex| ex.mode),
+        Some(ExchangeMode::LivePaper)
+    );
+    if exec_config.paper_trading && exec_config.paper.is_none() {
+        exec_config.paper = Some(PaperExecutionConfig::default());
+    }
     if exec_config.live_trading_enabled {
-        if let Some(okx_cfg) = okx_exchange.clone() {
-            if let (Some(creds), Some(ws_private)) =
-                (okx_cfg.credentials.clone(), okx_cfg.ws_private_url.clone())
-            {
-                exec_config.okx = Some(OkxExecutionConfig {
-                    rest_base_url: okx_cfg.rest_base_url,
-                    ws_private_url: ws_private,
-                    credentials: OkxCredentials {
-                        api_key: creds.api_key,
-                        api_secret: creds.api_secret,
-                        passphrase: creds.passphrase,
-                    },
-                });
-                exec_config.mode = ExecutionMode::LiveOkx;
-            } else {
-                warn!("live trading requested but OKX credentials or private URL missing; using simulated mode");
-                exec_config.live_trading_enabled = false;
-                exec_config.mode = ExecutionMode::Simulated;
+        match trading_mode {
+            TradingMode::LiveOkx => {
+                if let Some(okx_cfg) = exchange_cfg
+                    .clone()
+                    .filter(|ex| ex.name.eq_ignore_ascii_case("okx"))
+                {
+                    if matches!(
+                        okx_cfg.mode,
+                        ExchangeMode::LivePaper | ExchangeMode::LiveReal
+                    ) {
+                        if let Ok(credentials) = okx_cfg.load_credentials_from_env() {
+                            exec_config.okx = Some(OkxExecutionConfig {
+                                rest_base_url: okx_cfg.rest_base_url,
+                                ws_private_url: okx_cfg.ws_private_url,
+                                credentials,
+                            });
+                        } else {
+                            warn!("live OKX mode requested but credentials missing; using simulated mode");
+                            exec_config.live_trading_enabled = false;
+                            exec_config.mode = TradingMode::Simulated;
+                        }
+                    } else {
+                        warn!("OKX exchange config not in live mode; using simulated execution");
+                        exec_config.live_trading_enabled = false;
+                        exec_config.mode = TradingMode::Simulated;
+                    }
+                } else {
+                    warn!("no OKX exchange config found; using simulated execution");
+                    exec_config.mode = TradingMode::Simulated;
+                }
             }
-        } else {
-            warn!("no OKX exchange config found; using simulated execution");
-            exec_config.mode = ExecutionMode::Simulated;
+            TradingMode::LiveBinance => {
+                if let Some(_binance_cfg) = exchange_cfg
+                    .clone()
+                    .filter(|ex| ex.name.eq_ignore_ascii_case("binance"))
+                {
+                    warn!("Binance exchange configuration present but credential loading not implemented for new format; using simulated mode");
+                    exec_config.live_trading_enabled = false;
+                    exec_config.mode = TradingMode::Simulated;
+                } else {
+                    warn!("no Binance exchange config found; using simulated execution");
+                    exec_config.mode = TradingMode::Simulated;
+                }
+            }
+            TradingMode::Simulated => {
+                exec_config.mode = TradingMode::Simulated;
+            }
         }
     } else {
-        exec_config.mode = ExecutionMode::Simulated;
+        exec_config.mode = TradingMode::Simulated;
+        exec_config.okx = None;
+        exec_config.binance = None;
+        exec_config.paper_trading = false;
     }
+
+    let armed_exchanges: Vec<String> = {
+        let mut exchanges = Vec::new();
+        if exec_config.live_trading_enabled {
+            if matches!(exec_config.mode, TradingMode::LiveOkx) && exec_config.okx.is_some() {
+                exchanges.push("OKX".to_string());
+            }
+            if matches!(exec_config.mode, TradingMode::LiveBinance) && exec_config.binance.is_some()
+            {
+                exchanges.push("Binance".to_string());
+            }
+        }
+        exchanges
+    };
 
     let exec_service = Arc::new(ExecutionService::new(Arc::clone(&bus), exec_config)?);
     let exec_kernel_service = Arc::new(ExecutionKernelService::new(
@@ -306,6 +429,10 @@ async fn main() -> Result<()> {
 
     let kernel = Arc::new(kernel);
 
+    let exchange_profile = exchange_cfg
+        .as_ref()
+        .map(|ex| (ex.name.clone(), format!("{:?}", ex.mode)));
+
     let api_context = ApiContext::new(
         Arc::clone(&kernel),
         Arc::clone(&bus),
@@ -316,6 +443,10 @@ async fn main() -> Result<()> {
         market_subjects,
         node_config.net_profile.clone(),
         Some(Arc::clone(&risk_service)),
+        trading_mode.clone(),
+        armed_exchanges.clone(),
+        exchange_profile,
+        subscribed_symbols,
     );
 
     let api_users: Vec<ApiUserCredential> = node_config

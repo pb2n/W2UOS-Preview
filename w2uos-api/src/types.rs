@@ -3,6 +3,7 @@ use w2uos_backtest::{BacktestResult, BacktestStatus};
 use w2uos_kernel::NodeHeartbeat;
 use w2uos_kernel::RiskStatus;
 use w2uos_log::types::{LatencyBucket, LatencySummary, LogEvent, LogLevel, LogSource};
+use w2uos_log::TradeRecord;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServiceStatusDto {
@@ -14,6 +15,8 @@ pub struct ServiceStatusDto {
 pub struct NodeStatusDto {
     pub kernel_state: String,
     pub kernel_mode: String,
+    pub trading_mode: String,
+    pub armed_exchanges: Vec<String>,
     pub services: Vec<ServiceStatusDto>,
 }
 
@@ -62,6 +65,28 @@ pub struct PositionDto {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LiveStatusDto {
+    pub exchange: String,
+    pub mode: String,
+    pub symbols: Vec<String>,
+    pub market_connected: bool,
+    pub last_snapshot_ts: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LiveOrderDto {
+    pub id: String,
+    pub ts: chrono::DateTime<chrono::Utc>,
+    pub exchange: String,
+    pub symbol: String,
+    pub side: String,
+    pub size_quote: f64,
+    pub price: f64,
+    pub status: String,
+    pub correlation_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RiskStatusDto {
     pub daily_pnl_quote: f64,
     pub total_notional: f64,
@@ -90,6 +115,22 @@ impl From<LogEvent> for LogDto {
             fields: value.fields,
             correlation_id: value.correlation_id,
             trace_id: value.trace_id.map(|t| t.0),
+        }
+    }
+}
+
+impl From<TradeRecord> for LiveOrderDto {
+    fn from(value: TradeRecord) -> Self {
+        Self {
+            id: value.id,
+            ts: value.ts,
+            exchange: value.exchange,
+            symbol: format!("{}{}", value.symbol.base, value.symbol.quote),
+            side: format!("{:?}", value.side),
+            size_quote: value.size_quote,
+            price: value.price,
+            status: String::from(&value.status),
+            correlation_id: value.correlation_id,
         }
     }
 }
