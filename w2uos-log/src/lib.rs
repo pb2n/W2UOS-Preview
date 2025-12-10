@@ -8,4 +8,7 @@ pub mod types;
 
 pub use service::{log_event_via_bus, log_trade_via_bus, LogKernelService, LogService};
 pub use sink::{CompositeLogSink, FileLogSink, LogSink, SqlLogSink};
-pub use types::{LogEvent, LogLevel, LogSource, TradeRecord, TradeSide, TradeStatus, TradeSymbol};
+pub use types::{
+    ControlActionRecord, LogEvent, LogLevel, LogSource, TradeRecord, TradeSide, TradeStatus,
+    TradeSymbol,
+};

@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use w2uos_service::TraceId;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -49,6 +50,8 @@ pub struct TradeRecord {
     pub id: String,
     pub ts: DateTime<Utc>,
     pub exchange: String,
+    #[serde(default)]
+    pub mode: String,
     pub symbol: TradeSymbol,
     pub side: TradeSide,
     pub size_quote: f64,
@@ -87,6 +90,18 @@ pub struct LatencySummary {
 pub struct LatencyBucket {
     pub upper_bound_ms: i64,
     pub count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ControlActionRecord {
+    pub id: Option<i64>,
+    pub audit_id: String,
+    pub ts: DateTime<Utc>,
+    pub actor: String,
+    pub action: String,
+    pub params: Value,
+    pub previous_state: Option<String>,
+    pub new_state: Option<String>,
 }
 
 impl From<&TradeStatus> for String {

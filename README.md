@@ -112,8 +112,21 @@ REST API: http://localhost:8080
 Health check:  
 curl http://localhost:8080/health  
 
-Authenticated status query:  
-curl -H "X-API-KEY: your-secret-key" http://localhost:8080/status  
+Authenticated status query:
+curl -H "X-API-KEY: your-secret-key" http://localhost:8080/status
+
+LIVE-3 live + paper trading visibility (read-only, requires `X-API-KEY`):
+- Live status: `curl -H "X-API-KEY: your-secret-key" http://localhost:8080/live/status`
+- Paper positions: `curl -H "X-API-KEY: your-secret-key" http://localhost:8080/live/positions`
+- Recent paper orders: `curl -H "X-API-KEY: your-secret-key" "http://localhost:8080/live/orders?limit=100"`
+
+LIVE-4 control plane (requires `X-API-KEY` trader/admin roles):
+- Pause trading: `curl -X POST -H "X-API-KEY: your-secret-key" -H "Content-Type: application/json" -d '{"reason":"manual_pause"}' http://localhost:8080/control/pause`
+- Resume trading: `curl -X POST -H "X-API-KEY: your-secret-key" -H "Content-Type: application/json" -d '{"reason":"resume_after_check"}' http://localhost:8080/control/resume`
+- Freeze trading: `curl -X POST -H "X-API-KEY: your-secret-key" -H "Content-Type: application/json" -d '{"reason":"emergency_freeze","cancel_open_orders":true}' http://localhost:8080/control/freeze`
+- Unfreeze (safe states only): `curl -X POST -H "X-API-KEY: your-secret-key" -H "Content-Type: application/json" -d '{"reason":"manual_unfreeze","target_state":"SIMULATING"}' http://localhost:8080/control/unfreeze`
+- Flatten request: `curl -X POST -H "X-API-KEY: your-secret-key" -H "Content-Type: application/json" -d '{"reason":"flatten_all_positions","mode":"market","timeout_ms":10000}' http://localhost:8080/control/flatten`
+- Audit log: `curl -H "X-API-KEY: your-secret-key" "http://localhost:8080/control/audit-log?limit=50"`
 
 Live trading is disabled by default.
 
