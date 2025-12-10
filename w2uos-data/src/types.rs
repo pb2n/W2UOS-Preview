@@ -9,6 +9,19 @@ pub enum ExchangeId {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TradingMode {
+    Simulated,
+    LiveOkx,
+    LiveBinance,
+}
+
+impl Default for TradingMode {
+    fn default() -> Self {
+        TradingMode::Simulated
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Symbol {
     pub base: String,
     pub quote: String,

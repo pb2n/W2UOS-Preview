@@ -15,15 +15,31 @@ use w2uos_net::{build_client_and_shaper, NetMode, NetProfile, TrafficShaper};
 use w2uos_service::{Service, ServiceId, TraceId};
 
 use crate::{
+    binance::BinanceMarketStream,
     history::HistoricalStore,
-    okx::OkxMarketStream,
-    types::{ExchangeId, MarketSnapshot, Symbol},
+    okx::OkxMarketDataSource,
+    types::{ExchangeId, MarketSnapshot, Symbol, TradingMode},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum DataMode {
-    Simulated,
-    LiveOkx,
+pub enum ExchangeDataMode {
+    Simulation,
+    LivePaper,
+    LiveReal,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExchangeDataConfig {
+    pub name: String,
+    pub mode: ExchangeDataMode,
+    pub ws_public_url: String,
+}
+
+#[derive(Clone, Debug)]
+pub enum MarketDataSource {
+    Simulation,
+    OkxLive(OkxMarketDataSource),
+    BinanceLive(BinanceMarketStream),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -33,19 +49,16 @@ pub struct MarketDataSubscription {
     pub ws_url: String,
 }
 
-impl Default for DataMode {
-    fn default() -> Self {
-        DataMode::Simulated
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MarketDataConfig {
     pub subscriptions: Vec<MarketDataSubscription>,
     pub net_profile: NetProfile,
     pub history: Option<MarketHistoryConfig>,
+    /// Instrument identifiers for live market data sources (e.g., OKX instId like "BTC-USDT-SWAP").
     #[serde(default)]
-    pub mode: DataMode,
+    pub symbols: Vec<String>,
+    #[serde(default)]
+    pub mode: TradingMode,
 }
 
 impl Default for MarketDataConfig {
@@ -54,7 +67,8 @@ impl Default for MarketDataConfig {
             subscriptions: vec![],
             net_profile: NetProfile::default(),
             history: None,
-            mode: DataMode::default(),
+            symbols: vec![],
+            mode: TradingMode::default(),
         }
     }
 }
@@ -65,6 +79,7 @@ pub struct MarketDataService {
     pub http_client: Arc<RwLock<Client>>,
     pub traffic_shaper: Arc<RwLock<TrafficShaper>>,
     history_tx: Option<mpsc::Sender<MarketSnapshot>>,
+    exchange_config: Option<ExchangeDataConfig>,
     #[allow(dead_code)]
     history_task: Option<JoinHandle<()>>,
 }
@@ -75,7 +90,11 @@ pub struct MarketHistoryConfig {
 }
 
 impl MarketDataService {
-    pub async fn new(bus: Arc<dyn MessageBus>, config: MarketDataConfig) -> Result<Self> {
+    pub async fn new(
+        bus: Arc<dyn MessageBus>,
+        config: MarketDataConfig,
+        exchange_config: Option<ExchangeDataConfig>,
+    ) -> Result<Self> {
         let (http_client, traffic_shaper) = build_client_and_shaper(&config.net_profile)?;
         let (history_tx, history_task) = if let Some(history_cfg) = &config.history {
             let store = HistoricalStore::connect(&history_cfg.connection_string).await?;
@@ -98,6 +117,7 @@ impl MarketDataService {
             traffic_shaper: Arc::new(RwLock::new(traffic_shaper)),
             config: Arc::new(RwLock::new(config)),
             history_tx,
+            exchange_config,
             history_task,
         })
     }
@@ -151,33 +171,91 @@ impl MarketDataService {
             error!(?err, "failed to publish market data start event");
         }
 
-        match cfg_snapshot.mode {
-            DataMode::LiveOkx => self.run_okx().await?,
-            DataMode::Simulated => self.run_simulated().await?,
+        let source = self.select_source(&cfg_snapshot);
+
+        match source {
+            MarketDataSource::OkxLive(stream) => stream.run().await?,
+            MarketDataSource::BinanceLive(stream) => stream.run().await?,
+            MarketDataSource::Simulation => self.run_simulated().await?,
         }
 
         Ok(())
     }
 
-    async fn run_okx(&self) -> Result<()> {
-        let cfg = self.config.read().await.clone();
-        if cfg.subscriptions.is_empty() {
-            anyhow::bail!("no subscriptions configured for OKX mode");
+    fn select_source(&self, cfg: &MarketDataConfig) -> MarketDataSource {
+        match cfg.mode {
+            TradingMode::LiveOkx => {
+                if let Some(exchange_cfg) = self
+                    .exchange_config
+                    .as_ref()
+                    .filter(|ex| ex.name.eq_ignore_ascii_case("okx"))
+                    .filter(|ex| {
+                        matches!(
+                            ex.mode,
+                            ExchangeDataMode::LivePaper | ExchangeDataMode::LiveReal
+                        )
+                    })
+                {
+                    let instruments = if !cfg.symbols.is_empty() {
+                        cfg.symbols.clone()
+                    } else {
+                        cfg.subscriptions
+                            .iter()
+                            .map(|sub| {
+                                format!(
+                                    "{}-{}",
+                                    sub.symbol.base.to_uppercase(),
+                                    sub.symbol.quote.to_uppercase()
+                                )
+                            })
+                            .collect()
+                    };
+
+                    if instruments.is_empty() {
+                        warn!("no instruments configured for OKX live mode; using simulation");
+                        return MarketDataSource::Simulation;
+                    }
+
+                    let stream = OkxMarketDataSource::new(
+                        Arc::clone(&self.bus),
+                        exchange_cfg.ws_public_url.clone(),
+                        instruments,
+                        self.history_tx.clone(),
+                    );
+                    MarketDataSource::OkxLive(stream)
+                } else {
+                    warn!("missing OKX exchange config; using simulated market data");
+                    MarketDataSource::Simulation
+                }
+            }
+            TradingMode::LiveBinance => {
+                let cfg = cfg.clone();
+                if cfg.subscriptions.is_empty() {
+                    warn!("no Binance subscriptions configured; using simulated market data");
+                    return MarketDataSource::Simulation;
+                }
+
+                let ws_url = cfg
+                    .subscriptions
+                    .first()
+                    .map(|s| s.ws_url.clone())
+                    .unwrap_or_default();
+
+                if ws_url.is_empty() {
+                    warn!("Binance websocket url missing; using simulated market data");
+                    return MarketDataSource::Simulation;
+                }
+
+                let stream = BinanceMarketStream {
+                    bus: Arc::clone(&self.bus),
+                    ws_url,
+                    subscriptions: cfg.subscriptions.clone(),
+                    history_tx: self.history_tx.clone(),
+                };
+                MarketDataSource::BinanceLive(stream)
+            }
+            TradingMode::Simulated => MarketDataSource::Simulation,
         }
-        let ws_url = cfg
-            .subscriptions
-            .first()
-            .map(|s| s.ws_url.clone())
-            .ok_or_else(|| anyhow::anyhow!("missing OKX websocket url"))?;
-
-        let stream = OkxMarketStream {
-            bus: Arc::clone(&self.bus),
-            ws_url,
-            subscriptions: cfg.subscriptions.clone(),
-            history_tx: self.history_tx.clone(),
-        };
-
-        stream.run().await
     }
 
     async fn run_simulated(&self) -> Result<()> {

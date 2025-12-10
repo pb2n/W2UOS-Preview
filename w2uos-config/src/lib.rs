@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 use w2uos_data::service::MarketHistoryConfig;
-use w2uos_data::{DataMode, ExchangeId, MarketDataConfig, MarketDataSubscription, Symbol};
-use w2uos_exec::ExecutionConfig;
+use w2uos_data::{ExchangeId, MarketDataConfig, MarketDataSubscription, Symbol, TradingMode};
+use w2uos_exec::{ExecutionConfig, OkxCredentials};
 use w2uos_net::{NetMode, NetProfile};
 use wru_strategy::BotConfig;
 
@@ -108,83 +108,64 @@ impl Default for ApiSection {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ExchangeKind {
-    Okx,
-    Binance,
-    Dex(String),
+#[serde(rename_all = "kebab-case")]
+pub enum ExchangeMode {
+    Simulation,
+    LivePaper,
+    LiveReal,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum NetworkEnv {
-    Mainnet,
-    Testnet,
+impl Default for ExchangeMode {
+    fn default() -> Self {
+        ExchangeMode::Simulation
+    }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ExchangeCredentials {
-    pub api_key: String,
-    pub api_secret: String,
-    pub passphrase: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ExchangeConfig {
-    pub kind: ExchangeKind,
-    pub env: NetworkEnv,
+    /// Display name for the exchange (e.g., "okx" or "binance").
+    pub name: String,
+    /// Operational mode for the exchange adapter. `live-paper` executes via paper endpoints
+    /// while still consuming live market data.
+    #[serde(default)]
+    pub mode: ExchangeMode,
     pub rest_base_url: String,
     pub ws_public_url: String,
-    pub ws_private_url: Option<String>,
-    pub credentials: Option<ExchangeCredentials>,
-    pub weight_per_second: Option<u32>,
+    pub ws_private_url: String,
+    /// Environment variable names used to load credentials. These are kept as names so
+    /// secrets never reside in the config file.
+    pub api_key_env: Option<String>,
+    pub api_secret_env: Option<String>,
+    pub passphrase_env: Option<String>,
 }
 
 impl ExchangeConfig {
-    pub fn okx_defaults(env: NetworkEnv) -> Self {
-        let (rest, ws_pub, ws_priv) = match env {
-            NetworkEnv::Mainnet => (
-                "https://www.okx.com".to_string(),
-                "wss://ws.okx.com:8443/ws/v5/public".to_string(),
-                Some("wss://ws.okx.com:8443/ws/v5/private".to_string()),
-            ),
-            NetworkEnv::Testnet => (
-                "https://www.okx.com".to_string(),
-                "wss://wspap.okx.com:8443/ws/v5/public".to_string(),
-                Some("wss://wspap.okx.com:8443/ws/v5/private".to_string()),
-            ),
-        };
+    pub fn load_credentials_from_env(&self) -> anyhow::Result<OkxCredentials> {
+        let api_key_name = self
+            .api_key_env
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("api_key_env not set for exchange config"))?;
+        let api_secret_name = self
+            .api_secret_env
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("api_secret_env not set for exchange config"))?;
+        let passphrase_name = self
+            .passphrase_env
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("passphrase_env not set for exchange config"))?;
 
-        Self {
-            kind: ExchangeKind::Okx,
-            env,
-            rest_base_url: rest,
-            ws_public_url: ws_pub,
-            ws_private_url: ws_priv,
-            credentials: None,
-            weight_per_second: None,
-        }
-    }
+        let api_key = std::env::var(api_key_name)
+            .map_err(|_| anyhow::anyhow!("missing env var {}", api_key_name))?;
+        let api_secret = std::env::var(api_secret_name)
+            .map_err(|_| anyhow::anyhow!("missing env var {}", api_secret_name))?;
+        let passphrase = std::env::var(passphrase_name)
+            .map_err(|_| anyhow::anyhow!("missing env var {}", passphrase_name))?;
 
-    pub fn binance_defaults(env: NetworkEnv) -> Self {
-        let (rest, ws_pub) = match env {
-            NetworkEnv::Mainnet => (
-                "https://api.binance.com".to_string(),
-                "wss://stream.binance.com:9443/ws".to_string(),
-            ),
-            NetworkEnv::Testnet => (
-                "https://testnet.binance.vision".to_string(),
-                "wss://testnet.binance.vision/ws".to_string(),
-            ),
-        };
-
-        Self {
-            kind: ExchangeKind::Binance,
-            env,
-            rest_base_url: rest,
-            ws_public_url: ws_pub,
-            ws_private_url: None,
-            credentials: None,
-            weight_per_second: None,
-        }
+        Ok(OkxCredentials {
+            api_key,
+            api_secret,
+            passphrase: Some(passphrase),
+        })
     }
 }
 
@@ -211,8 +192,7 @@ pub struct NodeConfig {
     pub kernel_mode: KernelMode,
     pub logging: LoggingConfig,
     pub api: ApiSection,
-    #[serde(default = "default_exchange_configs")]
-    pub exchanges: Vec<ExchangeConfig>,
+    pub exchange: Option<ExchangeConfig>,
     pub market_data: MarketDataConfig,
     pub execution: ExecutionConfig,
     pub strategy: StrategySection,
@@ -238,12 +218,13 @@ impl Default for NodeConfig {
             kernel_mode: KernelMode::Live,
             logging: LoggingConfig::default(),
             api: ApiSection::default(),
-            exchanges: default_exchange_configs(),
+            exchange: None,
             market_data: MarketDataConfig {
                 subscriptions: vec![default_subscription],
                 net_profile: NetProfile::default(),
                 history: None,
-                mode: DataMode::Simulated,
+                symbols: vec![],
+                mode: TradingMode::Simulated,
             },
             execution: ExecutionConfig::default(),
             strategy: StrategySection::default(),
@@ -282,26 +263,7 @@ impl NodeConfig {
         for user in &mut cloned.api.users {
             user.api_key_hash = "***".to_string();
         }
-        for ex in &mut cloned.exchanges {
-            if let Some(creds) = &mut ex.credentials {
-                creds.api_key = "***".to_string();
-                creds.api_secret = "***".to_string();
-                if creds.passphrase.is_some() {
-                    creds.passphrase = Some("***".to_string());
-                }
-            }
-        }
         cloned
-    }
-
-    pub fn find_exchange(&self, kind: ExchangeKind, env: NetworkEnv) -> Option<&ExchangeConfig> {
-        self.exchanges
-            .iter()
-            .find(|cfg| cfg.kind == kind && cfg.env == env)
-    }
-
-    pub fn is_live_trading(&self) -> bool {
-        self.exchanges.iter().any(|cfg| cfg.credentials.is_some())
     }
 }
 
@@ -400,16 +362,6 @@ fn apply_env_overrides(cfg: &mut NodeConfig) {
             cfg.execution.initial_balance_usdt = parsed;
         }
     }
-
-    for exchange in &mut cfg.exchanges {
-        if let Some(creds) = &mut exchange.credentials {
-            creds.api_key = resolve_secret(&creds.api_key);
-            creds.api_secret = resolve_secret(&creds.api_secret);
-            if let Some(pass) = &creds.passphrase {
-                creds.passphrase = Some(resolve_secret(pass));
-            }
-        }
-    }
 }
 
 pub fn hash_api_key(api_key: &str) -> String {
@@ -417,22 +369,6 @@ pub fn hash_api_key(api_key: &str) -> String {
     hasher.update(api_key.as_bytes());
     let digest = hasher.finalize();
     format!("{:x}", digest)
-}
-
-fn default_exchange_configs() -> Vec<ExchangeConfig> {
-    vec![
-        ExchangeConfig::okx_defaults(NetworkEnv::Testnet),
-        ExchangeConfig::binance_defaults(NetworkEnv::Testnet),
-    ]
-}
-
-fn resolve_secret(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if let Some(stripped) = trimmed.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
-        std::env::var(stripped).unwrap_or_else(|_| raw.to_string())
-    } else {
-        raw.to_string()
-    }
 }
 
 #[cfg(test)]
@@ -458,6 +394,16 @@ bind = "127.0.0.1:8080"
 id = "admin"
 role = "Admin"
 api_key_hash = "2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b"
+
+[exchange]
+name = "okx"
+mode = "live-paper"
+rest_base_url = "https://example"
+ws_public_url = "wss://example/public"
+ws_private_url = "wss://example/private"
+api_key_env = "OKX_API_KEY"
+api_secret_env = "OKX_API_SECRET"
+passphrase_env = "OKX_PASSPHRASE"
 
 [market_data.net_profile]
 mode = "Direct"
@@ -570,17 +516,6 @@ api_key_hash = "13a9458e5c08f218d18f799fb3ec284e292d172457b8bbd6616f98b6e4178f55
     }
 
     #[test]
-    fn provides_default_exchange_configs() {
-        let cfg = NodeConfig::default();
-        assert!(cfg
-            .find_exchange(ExchangeKind::Okx, NetworkEnv::Testnet)
-            .is_some());
-        assert!(cfg
-            .find_exchange(ExchangeKind::Binance, NetworkEnv::Testnet)
-            .is_some());
-    }
-
-    #[test]
     fn resolves_exchange_credentials_from_env_refs() {
         let dir = tempfile::tempdir().unwrap();
         let base_path = dir.path().join("config.toml");
@@ -599,16 +534,15 @@ id = "admin"
 role = "Admin"
 api_key_hash = "2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b"
 
-[[exchanges]]
-kind = "Okx"
-env = "Testnet"
+[exchange]
+name = "okx"
+mode = "live-paper"
 rest_base_url = "https://example"
 ws_public_url = "wss://example/public"
 ws_private_url = "wss://example/private"
-[exchanges.credentials]
-api_key = "${OKX_API_KEY}"
-api_secret = "${OKX_API_SECRET}"
-passphrase = "${OKX_PASSPHRASE}"
+api_key_env = "OKX_API_KEY"
+api_secret_env = "OKX_API_SECRET"
+passphrase_env = "OKX_PASSPHRASE"
 
 [[market_data.subscriptions]]
 exchange = "Okx"
@@ -644,13 +578,15 @@ max_open_positions = 10
         std::env::set_var("OKX_PASSPHRASE", "pass789");
 
         let cfg = NodeConfig::from_file(&base_path).unwrap();
-        let ex = cfg
-            .find_exchange(ExchangeKind::Okx, NetworkEnv::Testnet)
-            .and_then(|c| c.credentials.clone())
-            .expect("credentials loaded");
-        assert_eq!(ex.api_key, "key123");
-        assert_eq!(ex.api_secret, "secret456");
-        assert_eq!(ex.passphrase.as_deref(), Some("pass789"));
+        let creds = cfg
+            .exchange
+            .as_ref()
+            .expect("exchange present")
+            .load_credentials_from_env()
+            .expect("creds loaded");
+        assert_eq!(creds.api_key, "key123");
+        assert_eq!(creds.api_secret, "secret456");
+        assert_eq!(creds.passphrase.as_deref(), Some("pass789"));
 
         std::env::remove_var("OKX_API_KEY");
         std::env::remove_var("OKX_API_SECRET");

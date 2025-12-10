@@ -5,13 +5,14 @@ use anyhow::Result;
 use sqlx::any::{install_default_drivers, AnyPoolOptions};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
-use crate::types::{LatencyRecord, LogEvent, TradeRecord};
+use crate::types::{ControlActionRecord, LatencyRecord, LogEvent, TradeRecord};
 
 #[async_trait::async_trait]
 pub trait LogSink: Send + Sync {
     async fn write_event(&self, event: LogEvent) -> Result<()>;
     async fn write_trade(&self, trade: TradeRecord) -> Result<()>;
     async fn write_latency(&self, latency: LatencyRecord) -> Result<()>;
+    async fn write_control_action(&self, action: ControlActionRecord) -> Result<()>;
 }
 
 pub struct FileLogSink {
@@ -58,6 +59,10 @@ impl LogSink for FileLogSink {
     async fn write_latency(&self, latency: LatencyRecord) -> Result<()> {
         self.write_json_line(&latency).await
     }
+
+    async fn write_control_action(&self, action: ControlActionRecord) -> Result<()> {
+        self.write_json_line(&action).await
+    }
 }
 
 pub struct SqlLogSink {
@@ -99,6 +104,7 @@ impl SqlLogSink {
                 id TEXT PRIMARY KEY,
                 ts TEXT NOT NULL,
                 exchange TEXT NOT NULL,
+                mode TEXT NOT NULL,
                 symbol_base TEXT NOT NULL,
                 symbol_quote TEXT NOT NULL,
                 side TEXT NOT NULL,
@@ -122,6 +128,21 @@ impl SqlLogSink {
                 tick_to_strategy_ms INTEGER NOT NULL,
                 strategy_to_exec_ms INTEGER NOT NULL,
                 tick_to_result_ms INTEGER NOT NULL
+            )"#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS control_actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                audit_id TEXT NOT NULL,
+                ts TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                action TEXT NOT NULL,
+                params TEXT NOT NULL,
+                previous_state TEXT,
+                new_state TEXT
             )"#,
         )
         .execute(&self.pool)
@@ -179,11 +200,12 @@ impl LogSink for SqlLogSink {
 
     async fn write_trade(&self, trade: TradeRecord) -> Result<()> {
         sqlx::query(
-            "INSERT OR REPLACE INTO trades (id, ts, exchange, symbol_base, symbol_quote, side, size_quote, price, status, strategy_id, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO trades (id, ts, exchange, mode, symbol_base, symbol_quote, side, size_quote, price, status, strategy_id, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(trade.id.clone())
         .bind(trade.ts.to_rfc3339())
         .bind(trade.exchange.clone())
+        .bind(trade.mode.clone())
         .bind(trade.symbol.base.clone())
         .bind(trade.symbol.quote.clone())
         .bind(format!("{:?}", trade.side))
@@ -209,6 +231,23 @@ impl LogSink for SqlLogSink {
         .bind(latency.tick_to_strategy_ms)
         .bind(latency.strategy_to_exec_ms)
         .bind(latency.tick_to_result_ms)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn write_control_action(&self, action: ControlActionRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO control_actions (audit_id, ts, actor, action, params, previous_state, new_state) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(action.audit_id.clone())
+        .bind(action.ts.to_rfc3339())
+        .bind(action.actor)
+        .bind(action.action)
+        .bind(action.params.to_string())
+        .bind(action.previous_state)
+        .bind(action.new_state)
         .execute(&self.pool)
         .await?;
 
@@ -245,6 +284,13 @@ impl LogSink for CompositeLogSink {
     async fn write_latency(&self, latency: LatencyRecord) -> Result<()> {
         for sink in &self.sinks {
             sink.write_latency(latency.clone()).await?;
+        }
+        Ok(())
+    }
+
+    async fn write_control_action(&self, action: ControlActionRecord) -> Result<()> {
+        for sink in &self.sinks {
+            sink.write_control_action(action.clone()).await?;
         }
         Ok(())
     }
