@@ -17,7 +17,7 @@ use crate::auth::{authenticate, record_auth_failure, required_role_for_path, Api
 use crate::context::ApiContext;
 use crate::types::{
     BacktestRequestDto, BacktestStatusDto, ClusterNodeDto, LatencyBucketDto, LatencySummaryDto,
-    LogDto, NodeStatusDto, PositionDto, RiskStatusDto,
+    LiveOrderDto, LiveStatusDto, LogDto, NodeStatusDto, PositionDto, RiskStatusDto,
 };
 use w2uos_data::{ExchangeId, Symbol};
 
@@ -113,6 +113,37 @@ async fn risk_reset_handler(ctx: web::Data<ApiContext>) -> Result<impl Responder
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
     Ok(HttpResponse::Ok().finish())
+}
+
+async fn live_status_handler(ctx: web::Data<ApiContext>) -> Result<impl Responder, Error> {
+    let status: LiveStatusDto = ctx
+        .live_status()
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+    Ok(web::Json(status))
+}
+
+async fn live_positions_handler(ctx: web::Data<ApiContext>) -> Result<impl Responder, Error> {
+    let positions: Vec<PositionDto> = ctx
+        .live_positions()
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+    Ok(web::Json(positions))
+}
+
+async fn live_orders_handler(
+    query: web::Query<std::collections::HashMap<String, String>>,
+    ctx: web::Data<ApiContext>,
+) -> Result<impl Responder, Error> {
+    let limit = query
+        .get("limit")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100);
+    let orders: Vec<LiveOrderDto> = ctx
+        .live_orders(limit)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+    Ok(web::Json(orders))
 }
 
 fn parse_symbol(sym: &str) -> Symbol {
@@ -220,9 +251,12 @@ pub fn build_app(
         })
         .app_data(web::Data::new(ctx.clone()))
         .route("/status", web::get().to(status_handler))
+        .route("/live/status", web::get().to(live_status_handler))
         .route("/health", web::get().to(health_handler))
         .route("/positions", web::get().to(positions_handler))
+        .route("/live/positions", web::get().to(live_positions_handler))
         .route("/logs", web::get().to(logs_handler))
+        .route("/live/orders", web::get().to(live_orders_handler))
         .route("/net/profile", web::get().to(net_profile_handler))
         .route("/cluster/nodes", web::get().to(cluster_nodes_handler))
         .route("/risk/status", web::get().to(risk_status_handler))

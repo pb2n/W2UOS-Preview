@@ -3818,6 +3818,7 @@ dependencies = [
  "base64 0.21.7",
  "chrono",
  "futures-util",
+ "hex",
  "hmac",
  "reqwest",
  "serde",
