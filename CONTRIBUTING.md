@@ -1,8 +1,8 @@
-# Contributing to W2UOS
+# Contributing to W2UOS-Preview
 
-Thank you for your interest in contributing to W2UOS.
+Thank you for your interest in contributing to W2UOS-Preview.
 
-W2UOS is a modular, high-performance quantitative trading operating system.
+W2UOS-Preview is a modular, high-performance quantitative trading operating system.
 We welcome contributions in the form of bug reports, feature requests, code improvements, documentation, and architectural discussions.
 
 This document defines the contribution workflow, coding standards, and review process.
@@ -39,7 +39,7 @@ You may contribute in any of the following ways:
 ### 3.1 Fork and Branch
 
 1. Fork the repository from:
-   https://github.com/pb2n/W2UOS
+   https://github.com/pb2n/W2UOS-Preview
 
 2. Create a dedicated feature branch:
 
@@ -162,4 +162,4 @@ The maintainer may request changes, clarification, or reject submissions that do
 
 Author and Maintainer: pb_2n^ (孔穆清)  
 GitHub: https://github.com/pb2n  
-Project Repository: https://github.com/pb2n/W2UOS
+Project Repository: https://github.com/pb2n/W2UOS-Preview

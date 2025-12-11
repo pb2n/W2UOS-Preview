@@ -1,6 +1,6 @@
-# W2UOS — Web3 Unified Operating System for Quantitative Trading
+# W2UOS-Preview — Operating System for Quantitative Trading
 
-W2UOS is a Rust-native, modular, high-performance trading operating system designed to support the full lifecycle of quantitative trading systems, from simulation and backtesting to live exchange execution, with privacy, extensibility, and distributed deployment as first-class objectives.
+W2UOS-Preview is a Rust-native, modular, high-performance trading operating system designed to support the full lifecycle of quantitative trading systems, from simulation and backtesting to live exchange execution, with privacy, extensibility, and distributed deployment as first-class objectives.
 
 🚧 This is a Preview / Architecture Demonstration Repository
 
@@ -42,12 +42,13 @@ w2uos-kernel/       Core runtime and service orchestration
 w2uos-bus/          Message bus abstraction  
 w2uos-data/         Market data ingestion and normalization  
 w2uos-exec/         Order execution engine and exchange adapters  
-w2uos-log/          Structured logging and telemetry  
-w2uos-api/          REST and WebSocket API  
-w2uos-dashboard/   WASM-based monitoring dashboard  
-w2uos-net/          Privacy-aware network abstraction  
-w2uos-backtest/    Historical replay and backtesting engine  
-wru-strategy/      Strategy runtime and implementations  
+w2uos-log/          Structured logging and telemetry
+w2uos-api/          REST and WebSocket API
+w2uos-dashboard/   WASM-based monitoring dashboard
+w2uos-tui/         Terminal dashboard for local live validation
+w2uos-net/          Privacy-aware network abstraction
+w2uos-backtest/    Historical replay and backtesting engine
+wru-strategy/      Strategy runtime and implementations
 w2uos-node/        Main node binary and configuration loader  
 config/            Development and production configuration  
 Dockerfile  
@@ -112,8 +113,21 @@ REST API: http://localhost:8080
 Health check:  
 curl http://localhost:8080/health  
 
-Authenticated status query:  
-curl -H "X-API-KEY: your-secret-key" http://localhost:8080/status  
+Authenticated status query:
+curl -H "X-API-KEY: your-secret-key" http://localhost:8080/status
+
+LIVE-3 live + paper trading visibility (read-only, requires `X-API-KEY`):
+- Live status: `curl -H "X-API-KEY: your-secret-key" http://localhost:8080/live/status`
+- Paper positions: `curl -H "X-API-KEY: your-secret-key" http://localhost:8080/live/positions`
+- Recent paper orders: `curl -H "X-API-KEY: your-secret-key" "http://localhost:8080/live/orders?limit=100"`
+
+LIVE-4 control plane (requires `X-API-KEY` trader/admin roles):
+- Pause trading: `curl -X POST -H "X-API-KEY: your-secret-key" -H "Content-Type: application/json" -d '{"reason":"manual_pause"}' http://localhost:8080/control/pause`
+- Resume trading: `curl -X POST -H "X-API-KEY: your-secret-key" -H "Content-Type: application/json" -d '{"reason":"resume_after_check"}' http://localhost:8080/control/resume`
+- Freeze trading: `curl -X POST -H "X-API-KEY: your-secret-key" -H "Content-Type: application/json" -d '{"reason":"emergency_freeze","cancel_open_orders":true}' http://localhost:8080/control/freeze`
+- Unfreeze (safe states only): `curl -X POST -H "X-API-KEY: your-secret-key" -H "Content-Type: application/json" -d '{"reason":"manual_unfreeze","target_state":"SIMULATING"}' http://localhost:8080/control/unfreeze`
+- Flatten request: `curl -X POST -H "X-API-KEY: your-secret-key" -H "Content-Type: application/json" -d '{"reason":"flatten_all_positions","mode":"market","timeout_ms":10000}' http://localhost:8080/control/flatten`
+- Audit log: `curl -H "X-API-KEY: your-secret-key" "http://localhost:8080/control/audit-log?limit=50"`
 
 Live trading is disabled by default.
 
@@ -121,10 +135,30 @@ Live trading is disabled by default.
 
 ### 4.3 Docker Deployment
 
-docker build -t w2uos:latest .  
-docker compose up -d  
+docker build -t w2uos:latest .
+docker compose up -d
 
-Service port: 8080  
+Service port: 8080
+
+---
+
+### 4.4 Terminal TUI (LIVE validation, read-only)
+
+The `w2uos-tui` binary renders a three-panel terminal dashboard (system, market, positions) by polling the local API.
+
+```
+cargo run -p w2uos-tui
+```
+
+Environment overrides:
+
+- `W2UOS_API_BASE` (default: `http://localhost:8080`)
+- `W2UOS_API_KEY` (required if API auth is enabled)
+- `W2UOS_TUI_SYMBOL` (default: `BTC/USDT`)
+- `W2UOS_TUI_HZ` (refresh rate; default: 8 Hz)
+- `W2UOS_TUI_LIMIT` (recent trade/sample limits; default: 50)
+
+Press `q` or `Esc` to exit. The TUI does not submit orders; it is intended for local LIVE pipeline validation only.
 
 ---
 
@@ -198,7 +232,7 @@ See the LICENSE and NOTICE files for full legal terms.
 
 Author: pb_2n^ (孔穆清)  
 GitHub: https://github.com/pb2n  
-Project Repository: https://github.com/pb2n/W2UOS  
+Project Repository: https://github.com/pb2n/W2UOS-Preview  
 
 The historical Python strategy files previously included in this repository are published for academic and reference purposes only.
 All commercial use, derivative trading systems, or production deployment based on these strategies require explicit written authorization from the author.

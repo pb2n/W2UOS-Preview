@@ -3,6 +3,20 @@ use w2uos_data::{ExchangeId, Symbol};
 use w2uos_service::TraceId;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionMode {
+    Sim,
+    Paper,
+    Live,
+}
+
+impl Default for ExecutionMode {
+    fn default() -> Self {
+        ExecutionMode::Sim
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum OrderSide {
     Buy,
     Sell,
