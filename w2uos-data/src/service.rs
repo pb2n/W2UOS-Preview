@@ -185,45 +185,46 @@ impl MarketDataService {
     fn select_source(&self, cfg: &MarketDataConfig) -> MarketDataSource {
         match cfg.mode {
             TradingMode::LiveOkx => {
-                if let Some(exchange_cfg) = self
+                let instruments = if !cfg.symbols.is_empty() {
+                    cfg.symbols.clone()
+                } else {
+                    cfg.subscriptions
+                        .iter()
+                        .map(|sub| {
+                            format!(
+                                "{}-{}",
+                                sub.symbol.base.to_uppercase(),
+                                sub.symbol.quote.to_uppercase()
+                            )
+                        })
+                        .collect()
+                };
+
+                if instruments.is_empty() {
+                    warn!("no instruments configured for OKX live mode; using simulation");
+                    return MarketDataSource::Simulation;
+                }
+
+                let ws_url = self
                     .exchange_config
                     .as_ref()
-                    .filter(|ex| matches!(ex.exchange, ExchangeId::Okx))
-                    .filter(|ex| {
-                        matches!(ex.mode, ExchangeDataMode::Paper | ExchangeDataMode::Live)
-                    })
-                {
-                    let instruments = if !cfg.symbols.is_empty() {
-                        cfg.symbols.clone()
-                    } else {
-                        cfg.subscriptions
-                            .iter()
-                            .map(|sub| {
-                                format!(
-                                    "{}-{}",
-                                    sub.symbol.base.to_uppercase(),
-                                    sub.symbol.quote.to_uppercase()
-                                )
-                            })
-                            .collect()
-                    };
+                    .map(|ex| ex.ws_public_url.clone())
+                    .filter(|url| !url.is_empty())
+                    .unwrap_or_else(|| "wss://ws.okx.com:8443/ws/v5/public".to_string());
 
-                    if instruments.is_empty() {
-                        warn!("no instruments configured for OKX live mode; using simulation");
-                        return MarketDataSource::Simulation;
-                    }
-
-                    let stream = OkxMarketDataSource::new(
-                        Arc::clone(&self.bus),
-                        exchange_cfg.ws_public_url.clone(),
-                        instruments,
-                        self.history_tx.clone(),
-                    );
-                    MarketDataSource::OkxLive(stream)
-                } else {
-                    warn!("missing OKX exchange config; using simulated market data");
-                    MarketDataSource::Simulation
+                if ws_url.is_empty() {
+                    warn!("OKX websocket url missing; using simulated market data");
+                    return MarketDataSource::Simulation;
                 }
+
+                info!(url = %ws_url, instruments = ?instruments, "starting OKX live market source");
+                let stream = OkxMarketDataSource::new(
+                    Arc::clone(&self.bus),
+                    ws_url,
+                    instruments,
+                    self.history_tx.clone(),
+                );
+                MarketDataSource::OkxLive(stream)
             }
             TradingMode::LiveBinance => {
                 let cfg = cfg.clone();

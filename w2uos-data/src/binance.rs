@@ -34,6 +34,22 @@ impl fmt::Debug for BinanceMarketStream {
 
 impl BinanceMarketStream {
     pub async fn run(&self) -> Result<()> {
+        let mut backoff = std::time::Duration::from_secs(1);
+        loop {
+            match self.stream_once().await {
+                Ok(_) => {
+                    backoff = std::time::Duration::from_secs(1);
+                }
+                Err(err) => {
+                    warn!(?err, "binance stream error; reconnecting");
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(std::time::Duration::from_secs(30));
+                }
+            }
+        }
+    }
+
+    async fn stream_once(&self) -> Result<()> {
         info!(url = %self.ws_url, "connecting Binance spot stream");
         let (ws_stream, _) = connect_async(&self.ws_url).await?;
         let (mut write, mut read) = ws_stream.split();
@@ -56,13 +72,18 @@ impl BinanceMarketStream {
             .send(Message::Text(subscribe_msg.to_string()))
             .await
             .context("send binance subscribe")?;
+        info!(symbols = ?symbol_map.keys(), "Binance subscription sent");
 
+        let mut initial_logs = 0usize;
         while let Some(msg) = read.next().await {
             let msg = msg?;
             match msg {
                 Message::Text(txt) => {
                     if let Err(err) = self.handle_text(&txt, &symbol_map).await {
                         warn!(?err, "failed to process Binance message");
+                    } else if initial_logs < 5 {
+                        info!(payload = %txt, "received Binance ticker frame");
+                        initial_logs += 1;
                     }
                 }
                 Message::Ping(payload) => {
@@ -70,13 +91,13 @@ impl BinanceMarketStream {
                 }
                 Message::Close(frame) => {
                     warn!(?frame, "Binance stream closed");
-                    break;
+                    return Err(anyhow::anyhow!("binance stream closed"));
                 }
                 _ => {}
             }
         }
 
-        Ok(())
+        Err(anyhow::anyhow!("binance websocket ended"))
     }
 
     async fn handle_text(&self, txt: &str, symbol_map: &HashMap<String, Symbol>) -> Result<()> {

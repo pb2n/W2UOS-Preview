@@ -98,13 +98,25 @@ impl OkxMarketDataSource {
         info!("OKX public stream subscribed");
 
         let mut state: HashMap<String, MarketSnapshot> = HashMap::new();
+        let mut initial_logs = 0usize;
 
         while let Some(msg) = read.next().await {
             let msg = msg?;
             match msg {
                 Message::Text(txt) => {
-                    if let Err(err) = self.handle_text(&txt, &mut state).await {
+                    if let Err(err) = self.handle_text(&txt, &mut state, &mut initial_logs).await {
                         warn!(?err, "failed to process OKX message");
+                    }
+                }
+                Message::Binary(bin) => {
+                    if let Ok(txt) = String::from_utf8(bin.clone()) {
+                        if let Err(err) =
+                            self.handle_text(&txt, &mut state, &mut initial_logs).await
+                        {
+                            warn!(?err, "failed to process OKX binary message");
+                        }
+                    } else {
+                        warn!(?bin, "unrecognized binary frame from OKX");
                     }
                 }
                 Message::Ping(payload) => {
@@ -125,6 +137,7 @@ impl OkxMarketDataSource {
         &self,
         txt: &str,
         state: &mut HashMap<String, MarketSnapshot>,
+        initial_logs: &mut usize,
     ) -> Result<()> {
         if txt.contains("event") {
             debug!(payload = %txt, "OKX event message");
@@ -144,6 +157,7 @@ impl OkxMarketDataSource {
                 let parsed: OkxEnvelope<OkxTicker> = serde_json::from_value(envelope)?;
                 for ticker in parsed.data {
                     if let Some(snapshot) = self.update_snapshot_from_ticker(&ticker, state)? {
+                        self.maybe_log_initial(&snapshot, initial_logs);
                         self.emit_snapshot(snapshot).await;
                     }
                 }
@@ -152,6 +166,7 @@ impl OkxMarketDataSource {
                 let parsed: OkxEnvelope<OkxBook> = serde_json::from_value(envelope)?;
                 for book in parsed.data {
                     if let Some(snapshot) = self.update_snapshot_from_book(&book, state)? {
+                        self.maybe_log_initial(&snapshot, initial_logs);
                         self.emit_snapshot(snapshot).await;
                     }
                 }
@@ -160,6 +175,7 @@ impl OkxMarketDataSource {
                 let parsed: OkxEnvelope<OkxTrade> = serde_json::from_value(envelope)?;
                 for trade in parsed.data {
                     if let Some(snapshot) = self.update_snapshot_from_trade(&trade, state)? {
+                        self.maybe_log_initial(&snapshot, initial_logs);
                         self.emit_snapshot(snapshot).await;
                     }
                 }
@@ -311,6 +327,20 @@ impl OkxMarketDataSource {
             trace_id: snapshot.trace_id.clone().or_else(|| Some(TraceId::new())),
         };
         let _ = log_event_via_bus(self.bus.as_ref(), &evt).await;
+    }
+
+    fn maybe_log_initial(&self, snapshot: &MarketSnapshot, counter: &mut usize) {
+        if *counter < 5 {
+            info!(
+                exchange = ?snapshot.exchange,
+                symbol = %format!("{}/{}", snapshot.symbol.base, snapshot.symbol.quote),
+                last = snapshot.last,
+                bid = snapshot.bid,
+                ask = snapshot.ask,
+                "received live OKX snapshot"
+            );
+            *counter += 1;
+        }
     }
 }
 
