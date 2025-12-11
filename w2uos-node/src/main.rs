@@ -191,7 +191,7 @@ async fn main() -> Result<()> {
         trading_mode = TradingMode::Simulated;
     }
 
-    let mut selected_market_mode = market_mode;
+    let mut selected_market_mode = market_mode.clone();
 
     match market_mode {
         MarketMode::OkxLive => {
@@ -204,10 +204,6 @@ async fn main() -> Result<()> {
                         sub.ws_url = okx_cfg.ws_public_url.clone();
                     }
                 }
-            } else {
-                warn!("OKX mode requested but exchange config missing; using simulated");
-                trading_mode = TradingMode::Simulated;
-                selected_market_mode = MarketMode::Mock;
             }
         }
         MarketMode::Mock => {}

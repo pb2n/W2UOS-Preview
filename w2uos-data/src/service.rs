@@ -207,10 +207,14 @@ impl MarketDataService {
                         .collect()
                 };
 
-                if instruments.is_empty() {
-                    warn!("no instruments configured for OKX live mode; using simulation");
-                    return MarketDataSource::Simulation;
-                }
+                let instruments = if instruments.is_empty() {
+                    warn!(
+                        "no instruments configured for OKX live mode; defaulting to BTC-USDT-SWAP"
+                    );
+                    vec!["BTC-USDT-SWAP".to_string()]
+                } else {
+                    instruments
+                };
 
                 let ws_url = cfg
                     .ws_url
