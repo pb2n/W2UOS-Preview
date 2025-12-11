@@ -6,12 +6,13 @@ use w2uos_bus::{BusMessage, LocalBus, MessageBus};
 
 use crate::service::LogService;
 use crate::sink::LogSink;
-use crate::types::{LogEvent, LogLevel, LogSource, TradeRecord};
+use crate::types::{ControlActionRecord, LogEvent, LogLevel, LogSource, TradeRecord};
 
 struct TestSink {
     events: Mutex<Vec<LogEvent>>,
     trades: Mutex<Vec<TradeRecord>>,
     latencies: Mutex<Vec<crate::types::LatencyRecord>>,
+    control_actions: Mutex<Vec<ControlActionRecord>>,
 }
 
 impl TestSink {
@@ -20,6 +21,7 @@ impl TestSink {
             events: Mutex::new(Vec::new()),
             trades: Mutex::new(Vec::new()),
             latencies: Mutex::new(Vec::new()),
+            control_actions: Mutex::new(Vec::new()),
         }
     }
 }
@@ -38,6 +40,11 @@ impl LogSink for TestSink {
 
     async fn write_latency(&self, latency: crate::types::LatencyRecord) -> anyhow::Result<()> {
         self.latencies.lock().unwrap().push(latency);
+        Ok(())
+    }
+
+    async fn write_control_action(&self, action: ControlActionRecord) -> anyhow::Result<()> {
+        self.control_actions.lock().unwrap().push(action);
         Ok(())
     }
 }
