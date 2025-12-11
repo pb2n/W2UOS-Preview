@@ -87,4 +87,4 @@ Security reports should be sent privately to:
 
 Author: pb_2n^ (孔穆清)  
 GitHub: https://github.com/pb2n  
-Project Repository: https://github.com/pb2n/W2UOS
+Project Repository: https://github.com/pb2n/W2UOS-Preview
