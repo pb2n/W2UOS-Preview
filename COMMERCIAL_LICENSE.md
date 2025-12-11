@@ -137,7 +137,7 @@ To request a commercial license, white-label agreement, or enterprise authorizat
 
 Author: pb_2n^ (孔穆清)  
 GitHub: https://github.com/pb2n  
-Project: https://github.com/pb2n/W2UOS  
+Project: https://github.com/pb2n/W2UOS-Preview  
 
 Filing a request does not imply automatic approval. All commercial use is subject to review and written agreement.
 
