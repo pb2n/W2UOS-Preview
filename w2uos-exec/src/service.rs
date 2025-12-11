@@ -54,6 +54,43 @@ impl Default for PaperExecutionConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LiveTradeLimits {
+    /// Max notional per order (quote currency) for early-stage live trading.
+    #[serde(default = "LiveTradeLimits::default_per_order_cap")]
+    pub per_order_notional_cap: f64,
+    /// Max total notional across a single UTC day (quote currency).
+    #[serde(default = "LiveTradeLimits::default_daily_cap")]
+    pub daily_notional_cap: f64,
+    /// Max concurrently open positions allowed while testing live trading.
+    #[serde(default = "LiveTradeLimits::default_open_positions")]
+    pub max_open_positions: usize,
+}
+
+impl LiveTradeLimits {
+    fn default_per_order_cap() -> f64 {
+        10.0
+    }
+
+    fn default_daily_cap() -> f64 {
+        100.0
+    }
+
+    fn default_open_positions() -> usize {
+        1
+    }
+}
+
+impl Default for LiveTradeLimits {
+    fn default() -> Self {
+        Self {
+            per_order_notional_cap: Self::default_per_order_cap(),
+            daily_notional_cap: Self::default_daily_cap(),
+            max_open_positions: Self::default_open_positions(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ExecutionConfig {
     pub initial_balance_usdt: f64,
     pub net_profile: NetProfile,
@@ -67,6 +104,8 @@ pub struct ExecutionConfig {
     pub paper_trading: bool,
     #[serde(default)]
     pub paper: Option<PaperExecutionConfig>,
+    #[serde(default)]
+    pub live_limits: LiveTradeLimits,
     pub okx: Option<OkxExecutionConfig>,
     pub binance: Option<BinanceExecutionConfig>,
 }
@@ -81,6 +120,7 @@ impl Default for ExecutionConfig {
             mode: TradingMode::Simulated,
             paper_trading: false,
             paper: None,
+            live_limits: LiveTradeLimits::default(),
             okx: None,
             binance: None,
         }
@@ -377,6 +417,30 @@ pub struct ExecutionService {
     okx_client: RwLock<Option<Arc<OkxClient>>>,
     binance_client: RwLock<Option<Arc<BinanceClient>>>,
     backend: RwLock<Arc<dyn ExecutionBackend>>, // active execution backend
+    live_meter: Arc<Mutex<LiveTradeMeter>>,
+}
+
+#[derive(Debug)]
+struct LiveTradeMeter {
+    day: chrono::NaiveDate,
+    daily_notional: f64,
+    positions: HashMap<String, f64>,
+}
+
+impl LiveTradeMeter {
+    fn new() -> Self {
+        Self {
+            day: chrono::Utc::now().date_naive(),
+            daily_notional: 0.0,
+            positions: HashMap::new(),
+        }
+    }
+
+    fn reset_for_today(&mut self) {
+        self.day = chrono::Utc::now().date_naive();
+        self.daily_notional = 0.0;
+        self.positions.clear();
+    }
 }
 
 impl ExecutionService {
@@ -465,6 +529,7 @@ impl ExecutionService {
             okx_client: RwLock::new(okx_client),
             binance_client: RwLock::new(binance_client),
             backend: RwLock::new(backend),
+            live_meter: Arc::new(Mutex::new(LiveTradeMeter::new())),
         })
     }
 
@@ -489,19 +554,42 @@ impl ExecutionService {
         let risk_gate_clear = !self.block_new_orders.load(Ordering::SeqCst);
         let live_confirmed = Self::live_checks_pass(&cfg);
 
-        let live_allowed = matches!(mode, ExecutionMode::Live)
+        let prereqs_met = matches!(mode, ExecutionMode::Live)
             && live_switch_on
             && risk_gate_clear
             && live_confirmed;
 
+        let (live_limits_ok, live_limits_reason) = if prereqs_met {
+            self.check_live_limits(&cmd, &cfg.live_limits).await
+        } else {
+            (true, None)
+        };
+
+        let live_allowed = prereqs_met && live_limits_ok;
+
         let backend = if matches!(mode, ExecutionMode::Live) && !live_allowed {
-            self.log_live_block(&cmd, live_switch_on, risk_gate_clear, live_confirmed)
-                .await;
+            self.log_live_block(
+                &cmd,
+                live_switch_on,
+                risk_gate_clear,
+                live_confirmed,
+                live_limits_reason,
+            )
+            .await;
             self.build_paper_fallback(&cfg).await
         } else if matches!(mode, ExecutionMode::Live) && !live_confirmed {
             // defensive fallback even if not explicitly blocked elsewhere
             self.build_paper_fallback(&cfg).await
         } else {
+            if live_allowed {
+                info!(
+                    command_id = %cmd.id,
+                    base = %cmd.symbol.base,
+                    quote = %cmd.symbol.quote,
+                    size_quote = cmd.size_quote,
+                    "LIVE-REAL ORDER: routing to exchange backend"
+                );
+            }
             self.backend.read().await.clone()
         };
         match backend.handle_order(cmd.clone()).await {
@@ -847,12 +935,80 @@ impl ExecutionService {
         )
     }
 
+    async fn check_live_limits(
+        &self,
+        cmd: &OrderCommand,
+        limits: &LiveTradeLimits,
+    ) -> (bool, Option<String>) {
+        if cmd.size_quote > limits.per_order_notional_cap {
+            return (
+                false,
+                Some(format!(
+                    "per-order cap exceeded: {:.4} > {:.4}",
+                    cmd.size_quote, limits.per_order_notional_cap
+                )),
+            );
+        }
+
+        let mut meter = self.live_meter.lock().await;
+        if meter.day != chrono::Utc::now().date_naive() {
+            meter.reset_for_today();
+        }
+
+        let projected_daily = meter.daily_notional + cmd.size_quote;
+        if projected_daily > limits.daily_notional_cap {
+            return (
+                false,
+                Some(format!(
+                    "daily cap exceeded: {:.4} > {:.4}",
+                    projected_daily, limits.daily_notional_cap
+                )),
+            );
+        }
+
+        let key = format!(
+            "{}{}",
+            cmd.symbol.base.to_uppercase(),
+            cmd.symbol.quote.to_uppercase()
+        );
+        let current_count = meter.positions.values().filter(|v| **v > 0.0).count();
+        let entry = meter.positions.entry(key).or_insert(0.0);
+        let new_value = match cmd.side {
+            OrderSide::Buy => *entry + cmd.size_quote,
+            OrderSide::Sell => (*entry - cmd.size_quote).max(0.0),
+        };
+
+        let mut projected_count = current_count;
+        if *entry <= 0.0 && new_value > 0.0 {
+            projected_count += 1;
+        }
+        if *entry > 0.0 && new_value <= 0.0 {
+            projected_count = projected_count.saturating_sub(1);
+        }
+
+        if projected_count > limits.max_open_positions {
+            return (
+                false,
+                Some(format!(
+                    "max open positions exceeded: {} > {}",
+                    projected_count, limits.max_open_positions
+                )),
+            );
+        }
+
+        *entry = new_value;
+        meter.daily_notional = projected_daily;
+
+        (true, None)
+    }
+
     async fn log_live_block(
         &self,
         cmd: &OrderCommand,
         live_switch_on: bool,
         risk_gate_clear: bool,
         live_confirmed: bool,
+        live_limits_reason: Option<String>,
     ) {
         let evt = LogEvent {
             ts: chrono::Utc::now(),
@@ -864,6 +1020,7 @@ impl ExecutionService {
                 "live_switch": live_switch_on,
                 "risk_gate_clear": risk_gate_clear,
                 "live_confirmed": live_confirmed,
+                "live_limits_reason": live_limits_reason,
                 "mode": "live",
             }),
             correlation_id: None,
