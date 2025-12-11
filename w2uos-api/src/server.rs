@@ -156,6 +156,14 @@ async fn system_metrics_handler(ctx: web::Data<ApiContext>) -> Result<impl Respo
     Ok(web::Json(metrics))
 }
 
+async fn system_status_handler(ctx: web::Data<ApiContext>) -> Result<impl Responder, Error> {
+    let status = ctx
+        .system_status()
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+    Ok(web::Json(status))
+}
+
 #[derive(Deserialize)]
 struct MarketMetricsQuery {
     symbol: String,
@@ -185,6 +193,11 @@ struct MarketSummaryQuery {
     limit: Option<usize>,
 }
 
+#[derive(Deserialize)]
+struct MarketSnapshotQuery {
+    symbol: Option<String>,
+}
+
 async fn market_summary_handler(
     ctx: web::Data<ApiContext>,
     query: web::Query<MarketSummaryQuery>,
@@ -195,6 +208,21 @@ async fn market_summary_handler(
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
     Ok(web::Json(response))
+}
+
+async fn market_snapshot_handler(
+    ctx: web::Data<ApiContext>,
+    query: web::Query<MarketSnapshotQuery>,
+) -> Result<HttpResponse, Error> {
+    let snapshot = ctx
+        .market_snapshot(query.symbol.as_deref())
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    match snapshot {
+        Some(snap) => Ok(HttpResponse::Ok().json(snap)),
+        None => Ok(HttpResponse::NoContent().finish()),
+    }
 }
 
 #[derive(Deserialize)]
@@ -523,6 +551,7 @@ pub fn build_app(
         })
         .app_data(web::Data::new(ctx.clone()))
         .route("/status", web::get().to(status_handler))
+        .route("/system/status", web::get().to(system_status_handler))
         .route("/live/status", web::get().to(live_status_handler))
         .route("/health", web::get().to(health_handler))
         .route("/positions", web::get().to(positions_handler))
@@ -559,6 +588,7 @@ pub fn build_app(
             "/metrics/market/summary",
             web::get().to(market_summary_handler),
         )
+        .route("/market/snapshot", web::get().to(market_snapshot_handler))
         .route("/metrics/system", web::get().to(system_metrics_handler))
         .route("/backtest/start", web::post().to(backtest_start_handler))
         .route("/backtest/status", web::get().to(backtest_status_handler))

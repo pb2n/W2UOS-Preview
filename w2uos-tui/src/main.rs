@@ -91,50 +91,57 @@ impl ApiClient {
         Ok(resp.json().await?)
     }
 
-    async fn status(&self) -> Result<NodeStatusDto> {
-        self.get_json("status").await
+    async fn system_status(&self) -> Result<SystemStatusDto> {
+        self.get_json("/system/status").await
     }
 
     async fn control_state(&self) -> Result<ControlStateDto> {
-        self.get_json("control/state").await
+        self.get_json("/control/state").await
     }
 
     async fn health(&self) -> Result<HealthStatusDto> {
-        self.get_json("health").await
+        self.get_json("/health").await
     }
 
     async fn system_metrics(&self) -> Result<SystemMetricsDto> {
-        self.get_json("metrics/system").await
+        self.get_json("/metrics/system").await
     }
 
-    async fn market_metrics(&self, symbol: &str, limit: usize) -> Result<Option<MarketMetricsDto>> {
-        let path = format!("metrics/market?symbol={}&limit={}", symbol, limit);
-        self.get_json(&path).await.map(Some).or_else(|e| {
-            if e.to_string().contains("404") {
-                Ok(None)
-            } else {
-                Err(e)
-            }
-        })
+    async fn market_snapshot(&self, symbol: Option<&str>) -> Result<Option<MarketSnapshotDto>> {
+        let mut path = String::from("/market/snapshot");
+        if let Some(sym) = symbol {
+            path.push_str(&format!("?symbol={}", sym));
+        }
+
+        let url = format!(
+            "{}/{}",
+            self.base_url.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        );
+        let mut req = self.client.get(url);
+        if let Some(key) = &self.api_key {
+            req = req.header("X-API-KEY", key);
+        }
+        let resp = req.send().await?;
+        if resp.status() == reqwest::StatusCode::NO_CONTENT {
+            return Ok(None);
+        }
+        let resp = resp.error_for_status()?;
+        Ok(Some(resp.json().await?))
     }
 
     async fn live_positions(&self) -> Result<Vec<PositionDto>> {
         self.get_json("/live/positions").await
     }
-
-    async fn live_status(&self) -> Result<LiveStatusDto> {
-        self.get_json("/live/status").await
-    }
 }
 
 #[derive(Default, Clone)]
 struct AppState {
-    status: Option<NodeStatusDto>,
+    system_status: Option<SystemStatusDto>,
     control_state: Option<ControlStateDto>,
     health: Option<HealthStatusDto>,
     system_metrics: Option<SystemMetricsDto>,
-    market_metrics: Option<MarketMetricsDto>,
-    live_status: Option<LiveStatusDto>,
+    market_snapshot: Option<MarketSnapshotDto>,
     positions: Vec<PositionDto>,
     last_error: Option<String>,
     last_snapshot_ts: Option<DateTime<Utc>>,
@@ -203,6 +210,23 @@ struct HealthStatusDto {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+struct SystemStatusDto {
+    node_id: String,
+    kernel_mode: String,
+    exchange: String,
+    execution_mode: String,
+    live_switch: String,
+    ws_public_alive: bool,
+    ws_private_alive: bool,
+    rest_market_ok: bool,
+    rest_execution_ok: bool,
+    uptime_secs: u64,
+    snapshot_rate_per_sec: Option<f64>,
+    last_snapshot_ts: Option<DateTime<Utc>>,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 struct SystemMetricsDto {
     node: NodeInfoDto,
     runtime: RuntimeInfoDto,
@@ -248,6 +272,24 @@ struct RiskInfoDto {
     current_notional_usdt: f64,
     open_positions_count: i32,
     intraday_drawdown_pct: f64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct SymbolDto {
+    base: String,
+    quote: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct MarketSnapshotDto {
+    ts: DateTime<Utc>,
+    exchange: String,
+    symbol: SymbolDto,
+    last: f64,
+    bid: f64,
+    ask: f64,
+    spread_bps: f64,
+    volume_24h: f64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -399,11 +441,13 @@ async fn poll_key_event() -> Result<Option<CEvent>> {
 
 async fn refresh(client: &ApiClient, state: &mut AppState, cfg: &AppConfig) -> Result<()> {
     let mut errors = Vec::new();
-    let status = client.status().await;
-    if let Ok(value) = status {
-        state.status = Some(value);
-    } else if let Err(err) = status {
-        errors.push(format!("status: {err}"));
+    let system_status = client.system_status().await;
+    if let Ok(value) = system_status {
+        state.snapshot_rate = value.snapshot_rate_per_sec;
+        state.record_snapshot(value.last_snapshot_ts);
+        state.system_status = Some(value);
+    } else if let Err(err) = system_status {
+        errors.push(format!("system: {err}"));
     }
 
     let control = client.control_state().await;
@@ -427,18 +471,13 @@ async fn refresh(client: &ApiClient, state: &mut AppState, cfg: &AppConfig) -> R
         errors.push(format!("metrics: {err}"));
     }
 
-    match client.market_metrics(&cfg.symbol, cfg.summary_limit).await {
-        Ok(Some(market)) => state.market_metrics = Some(market),
-        Ok(None) => errors.push("symbol not found".to_string()),
+    match client.market_snapshot(Some(&cfg.symbol)).await {
+        Ok(Some(snapshot)) => {
+            state.record_snapshot(Some(snapshot.ts));
+            state.market_snapshot = Some(snapshot);
+        }
+        Ok(None) => errors.push("no snapshot yet".to_string()),
         Err(err) => errors.push(format!("market: {err}")),
-    }
-
-    let live_status = client.live_status().await;
-    if let Ok(live) = live_status {
-        state.record_snapshot(live.last_snapshot_ts);
-        state.live_status = Some(live);
-    } else if let Err(err) = live_status {
-        errors.push(format!("live: {err}"));
     }
 
     let positions = client.live_positions().await;
@@ -476,41 +515,58 @@ fn draw_system_panel(frame: &mut UiFrame, area: Rect, state: &AppState, cfg: &Ap
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
-    let status = state.status.as_ref();
     let control = state.control_state.as_ref();
     let health = state.health.as_ref();
+    let system = state.system_status.as_ref();
     let metrics = state.system_metrics.as_ref();
 
-    let node_id = status.map(|s| s.node_id.as_str()).unwrap_or("n/a");
-    let kernel_mode = status.map(|s| s.kernel_mode.as_str()).unwrap_or("n/a");
-    let execution_mode = status.map(|s| s.trading_mode.as_str()).unwrap_or("n/a");
-    let exchange = status
-        .and_then(|s| s.armed_exchanges.first())
-        .map(|s| s.as_str())
+    let node_id = system.map(|s| s.node_id.as_str()).unwrap_or("n/a");
+    let kernel_mode = system.map(|s| s.kernel_mode.as_str()).unwrap_or("n/a");
+    let execution_mode = system.map(|s| s.execution_mode.as_str()).unwrap_or("n/a");
+    let exchange = system.map(|s| s.exchange.as_str()).unwrap_or("n/a");
+    let live_switch = system
+        .map(|s| s.live_switch.as_str())
+        .or_else(|| control.map(|c| if c.live_switch_armed { "ARMED" } else { "OFF" }))
         .unwrap_or("n/a");
-    let live_switch = control
-        .map(|c| if c.live_switch_armed { "ARMED" } else { "OFF" })
-        .unwrap_or("n/a");
-    let ws_status = health
-        .map(|h| {
+    let ws_status = system
+        .map(|s| {
             format!(
                 "pub:{} priv:{}",
-                flag(h.ws_public_alive),
-                flag(h.ws_private_alive)
+                flag(s.ws_public_alive),
+                flag(s.ws_private_alive)
             )
         })
+        .or_else(|| {
+            health.map(|h| {
+                format!(
+                    "pub:{} priv:{}",
+                    flag(h.ws_public_alive),
+                    flag(h.ws_private_alive)
+                )
+            })
+        })
         .unwrap_or_else(|| "n/a".to_string());
-    let rest_status = health
-        .map(|h| {
+    let rest_status = system
+        .map(|s| {
             format!(
                 "market:{} exec:{}",
-                flag(h.market_connected),
-                flag(h.execution_connected)
+                flag(s.rest_market_ok),
+                flag(s.rest_execution_ok)
             )
         })
+        .or_else(|| {
+            health.map(|h| {
+                format!(
+                    "market:{} exec:{}",
+                    flag(h.market_connected),
+                    flag(h.execution_connected)
+                )
+            })
+        })
         .unwrap_or_else(|| "n/a".to_string());
-    let uptime = metrics
-        .map(|m| format_duration(m.node.uptime_seconds))
+    let uptime = system
+        .map(|s| format_duration(s.uptime_secs))
+        .or_else(|| metrics.map(|m| format_duration(m.node.uptime_seconds)))
         .unwrap_or_else(|| "n/a".to_string());
     let last_error = state
         .last_error
@@ -590,14 +646,8 @@ fn draw_market_panel(frame: &mut UiFrame, area: Rect, state: &AppState, _cfg: &A
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow));
 
-    if let Some(mkt) = state.market_metrics.as_ref() {
-        let ws_latency = state
-            .live_status
-            .as_ref()
-            .and_then(|ls| ls.last_snapshot_ts)
-            .map(|ts| (Utc::now() - ts).num_milliseconds())
-            .map(|ms| format!("{ms} ms"))
-            .unwrap_or_else(|| "n/a".to_string());
+    if let Some(mkt) = state.market_snapshot.as_ref() {
+        let ws_latency = (Utc::now() - mkt.ts).num_milliseconds().max(0).to_string();
 
         let lines = vec![
             Line::from(vec![
@@ -606,11 +656,11 @@ fn draw_market_panel(frame: &mut UiFrame, area: Rect, state: &AppState, _cfg: &A
             ]),
             Line::from(vec![
                 Span::styled("Symbol: ", bold()),
-                Span::raw(&mkt.symbol),
+                Span::raw(format!("{}/{}", mkt.symbol.base, mkt.symbol.quote)),
             ]),
             Line::from(vec![
                 Span::styled("Last: ", bold()),
-                Span::raw(format_price(mkt.last_price)),
+                Span::raw(format_price(mkt.last)),
             ]),
             Line::from(vec![
                 Span::styled("Bid/Ask: ", bold()),
@@ -622,7 +672,7 @@ fn draw_market_panel(frame: &mut UiFrame, area: Rect, state: &AppState, _cfg: &A
             ]),
             Line::from(vec![
                 Span::styled("Spread bp: ", bold()),
-                Span::raw(format!("{:.2}", mkt.spread_bp)),
+                Span::raw(format!("{:.2}", mkt.spread_bps)),
             ]),
             Line::from(vec![
                 Span::styled("24h Vol: ", bold()),
@@ -630,7 +680,7 @@ fn draw_market_panel(frame: &mut UiFrame, area: Rect, state: &AppState, _cfg: &A
             ]),
             Line::from(vec![
                 Span::styled("WS Latency: ", bold()),
-                Span::raw(ws_latency),
+                Span::raw(format!("{} ms", ws_latency)),
             ]),
             Line::from(vec![
                 Span::styled("Snapshot rate: ", bold()),
@@ -646,7 +696,7 @@ fn draw_market_panel(frame: &mut UiFrame, area: Rect, state: &AppState, _cfg: &A
         let paragraph = Paragraph::new(lines).block(block);
         frame.render_widget(paragraph, area);
     } else {
-        let paragraph = Paragraph::new("Waiting for market data...").block(block);
+        let paragraph = Paragraph::new("No snapshot yet").block(block);
         frame.render_widget(paragraph, area);
     }
 }
@@ -685,14 +735,14 @@ fn draw_positions_panel(frame: &mut UiFrame, area: Rect, state: &AppState) {
             Cell::from("n/a"),
             Cell::from(
                 state
-                    .market_metrics
+                    .market_snapshot
                     .as_ref()
                     .filter(|m| {
-                        m.symbol
+                        format!("{}/{}", m.symbol.base, m.symbol.quote)
                             .replace('-', "/")
                             .eq_ignore_ascii_case(&pos.symbol.replace('-', "/"))
                     })
-                    .map(|m| format_price(m.last_price))
+                    .map(|m| format_price(m.last))
                     .unwrap_or_else(|| "n/a".to_string()),
             ),
             Cell::from("n/a"),

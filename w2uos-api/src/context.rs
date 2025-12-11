@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use anyhow::Result;
 use chrono::Utc;
@@ -20,9 +20,10 @@ use w2uos_net::NetProfile;
 use crate::types::{
     ClusterNodeDto, ControlActionDto, ControlResponseDto, HealthStatusDto, IbmqInfoDto,
     LatencyBucketDto, LatencySummaryDto, LiveOrderDto, LiveStatusDto, LogDto, MarketMetricsDto,
-    MarketSummaryResponseDto, MarketSymbolSummaryDto, NodeInfoDto, NodeStatusDto,
-    OrderbookSummaryDto, PositionDto, RecentTradeDto, RiskInfoDto, RiskProfileResponseDto,
-    RuntimeInfoDto, ServiceStatusDto, StrategyInfoDto, SystemMetricsDto, X402InfoDto,
+    MarketSnapshotDto, MarketSummaryResponseDto, MarketSymbolSummaryDto, NodeInfoDto,
+    NodeStatusDto, OrderbookSummaryDto, PositionDto, RecentTradeDto, RiskInfoDto,
+    RiskProfileResponseDto, RuntimeInfoDto, ServiceStatusDto, StrategyInfoDto, SymbolDto,
+    SystemMetricsDto, SystemStatusDto, X402InfoDto,
 };
 
 #[derive(Clone)]
@@ -30,6 +31,8 @@ pub struct LivePipelineState {
     last_snapshot: Arc<tokio::sync::Mutex<Option<MarketSnapshot>>>,
     snapshots_by_symbol: Arc<tokio::sync::Mutex<HashMap<String, MarketSnapshot>>>,
     trades: Arc<tokio::sync::Mutex<Vec<LiveOrderDto>>>,
+    snapshot_rate: Arc<tokio::sync::Mutex<Option<f64>>>,
+    last_snapshot_instant: Arc<tokio::sync::Mutex<Option<std::time::Instant>>>,
     symbols: Vec<String>,
 }
 
@@ -40,6 +43,8 @@ impl LivePipelineState {
             last_snapshot: Arc::new(tokio::sync::Mutex::new(None)),
             snapshots_by_symbol: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             trades: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            snapshot_rate: Arc::new(tokio::sync::Mutex::new(None)),
+            last_snapshot_instant: Arc::new(tokio::sync::Mutex::new(None)),
             symbols,
         }
     }
@@ -47,6 +52,8 @@ impl LivePipelineState {
     pub fn start_listeners(&self, bus: Arc<dyn MessageBus>, subjects: Vec<String>) {
         let last_snapshot = Arc::clone(&self.last_snapshot);
         let snapshots_by_symbol = Arc::clone(&self.snapshots_by_symbol);
+        let snapshot_rate = Arc::clone(&self.snapshot_rate);
+        let last_snapshot_instant = Arc::clone(&self.last_snapshot_instant);
         let symbol_filter = self.symbols.clone();
         let bus_for_snapshots = Arc::clone(&bus);
         tokio::spawn(async move {
@@ -58,6 +65,8 @@ impl LivePipelineState {
 
                 let last_snapshot = Arc::clone(&last_snapshot);
                 let snapshots_by_symbol = Arc::clone(&snapshots_by_symbol);
+                let snapshot_rate = Arc::clone(&snapshot_rate);
+                let last_snapshot_instant = Arc::clone(&last_snapshot_instant);
                 let symbol_filter = symbol_filter.clone();
                 tokio::spawn(async move {
                     while let Some(msg) = sub.receiver.recv().await {
@@ -76,6 +85,18 @@ impl LivePipelineState {
                                 {
                                     let mut guard = snapshots_by_symbol.lock().await;
                                     guard.insert(key.clone(), snapshot.clone());
+                                }
+
+                                {
+                                    let mut rate = snapshot_rate.lock().await;
+                                    let mut prev = last_snapshot_instant.lock().await;
+                                    if let Some(prev_instant) = prev.take() {
+                                        let elapsed = prev_instant.elapsed().as_secs_f64();
+                                        if elapsed > 0.0 {
+                                            *rate = Some(1.0 / elapsed);
+                                        }
+                                    }
+                                    *prev = Some(Instant::now());
                                 }
 
                                 let mut guard = last_snapshot.lock().await;
@@ -121,6 +142,11 @@ impl LivePipelineState {
             .values()
             .max_by_key(|snap| snap.ts)
             .map(|snap| snap.ts)
+    }
+
+    pub async fn snapshot_rate(&self) -> Option<f64> {
+        let guard = self.snapshot_rate.lock().await;
+        *guard
     }
 
     pub async fn recent_trades(&self, limit: usize) -> Vec<LiveOrderDto> {
@@ -345,6 +371,42 @@ impl ApiContext {
         })
     }
 
+    pub async fn system_status(&self) -> Result<SystemStatusDto> {
+        let health = self.health_status().await?;
+        let uptime_secs = Utc::now()
+            .signed_duration_since(self.start_time)
+            .num_seconds()
+            .max(0) as u64;
+        let (live_switch, _, _) = self.kernel.live_switch_state().await;
+
+        let (exchange, exec_mode_raw) = self
+            .exchange_profile
+            .clone()
+            .unwrap_or_else(|| ("UNKNOWN".to_string(), "simulation".to_string()));
+
+        let execution_mode = match exec_mode_raw.to_ascii_lowercase().as_str() {
+            "live-paper" | "paper" => "Paper".to_string(),
+            "live-real" | "live" => "Live".to_string(),
+            _ => "Simulated".to_string(),
+        };
+
+        Ok(SystemStatusDto {
+            node_id: self.node_id.clone(),
+            kernel_mode: format!("{:?}", self.kernel.mode()),
+            exchange,
+            execution_mode,
+            live_switch: if live_switch { "ON" } else { "OFF" }.to_string(),
+            ws_public_alive: health.ws_public_alive,
+            ws_private_alive: health.ws_private_alive,
+            rest_market_ok: health.market_connected,
+            rest_execution_ok: health.execution_connected,
+            uptime_secs,
+            snapshot_rate_per_sec: self.live_state.snapshot_rate().await,
+            last_snapshot_ts: self.live_state.latest_snapshot_ts().await,
+            last_error: None,
+        })
+    }
+
     pub async fn health_check(&self) -> Result<bool> {
         let state = self.kernel.state().await;
         let services = self.kernel.service_states().await;
@@ -508,6 +570,38 @@ impl ApiContext {
             market_connected: connected,
             last_snapshot_ts: last_ts,
         })
+    }
+
+    pub async fn market_snapshot(&self, symbol: Option<&str>) -> Result<Option<MarketSnapshotDto>> {
+        let snapshot = if let Some(sym) = symbol {
+            self.live_state.last_snapshot_for(sym).await
+        } else {
+            self.live_state.last_snapshot().await
+        };
+
+        let Some(snapshot) = snapshot else {
+            return Ok(None);
+        };
+
+        let spread_bps = if snapshot.bid > 0.0 && snapshot.ask > 0.0 {
+            ((snapshot.ask - snapshot.bid) / ((snapshot.bid + snapshot.ask) / 2.0)) * 10_000.0
+        } else {
+            0.0
+        };
+
+        Ok(Some(MarketSnapshotDto {
+            ts: snapshot.ts,
+            exchange: format!("{}", snapshot.exchange),
+            symbol: SymbolDto {
+                base: snapshot.symbol.base.clone(),
+                quote: snapshot.symbol.quote.clone(),
+            },
+            last: snapshot.last,
+            bid: snapshot.bid,
+            ask: snapshot.ask,
+            spread_bps,
+            volume_24h: snapshot.volume_24h,
+        }))
     }
 
     pub async fn live_orders(&self, limit: usize) -> Result<Vec<LiveOrderDto>> {

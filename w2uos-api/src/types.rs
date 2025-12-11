@@ -15,11 +15,46 @@ pub struct HealthStatusDto {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SystemStatusDto {
+    pub node_id: String,
+    pub kernel_mode: String,
+    pub exchange: String,
+    pub execution_mode: String,
+    pub live_switch: String,
+    pub ws_public_alive: bool,
+    pub ws_private_alive: bool,
+    pub rest_market_ok: bool,
+    pub rest_execution_ok: bool,
+    pub uptime_secs: u64,
+    pub snapshot_rate_per_sec: Option<f64>,
+    pub last_snapshot_ts: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RecentTradeDto {
     pub ts: String,
     pub side: String,
     pub price: f64,
     pub size_quote: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SymbolDto {
+    pub base: String,
+    pub quote: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct MarketSnapshotDto {
+    pub ts: chrono::DateTime<chrono::Utc>,
+    pub exchange: String,
+    pub symbol: SymbolDto,
+    pub last: f64,
+    pub bid: f64,
+    pub ask: f64,
+    pub spread_bps: f64,
+    pub volume_24h: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
