@@ -225,6 +225,14 @@ async fn market_snapshot_handler(
     }
 }
 
+async fn market_last_debug_handler(ctx: web::Data<ApiContext>) -> Result<impl Responder, Error> {
+    let snapshots = ctx
+        .all_market_snapshots()
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+    Ok(web::Json(snapshots))
+}
+
 #[derive(Deserialize)]
 struct ControlReasonRequest {
     reason: Option<String>,
@@ -589,6 +597,10 @@ pub fn build_app(
             web::get().to(market_summary_handler),
         )
         .route("/market/snapshot", web::get().to(market_snapshot_handler))
+        .route(
+            "/debug/market/last",
+            web::get().to(market_last_debug_handler),
+        )
         .route("/metrics/system", web::get().to(system_metrics_handler))
         .route("/backtest/start", web::post().to(backtest_start_handler))
         .route("/backtest/status", web::get().to(backtest_status_handler))

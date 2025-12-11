@@ -1,6 +1,10 @@
 //! OKX live market data source used in LIVE-3. Connects to the public websocket,
 //! subscribes to ticker updates, and emits normalized `MarketSnapshot` events into
 //! the internal bus while persisting to the optional history sink.
+//!
+//! In `MarketMode::OkxLive`, this is the ONLY market data source for OKX. All
+//! synthetic or demo generators MUST be disabled. Live and paper trading rely on
+//! this module consuming the real OKX public websocket.
 
 use std::{collections::HashMap, fmt, sync::Arc, time::Duration};
 
@@ -133,7 +137,7 @@ impl OkxMarketDataSource {
         Err(anyhow!("OKX websocket ended"))
     }
 
-    async fn handle_text(
+    pub async fn handle_text(
         &self,
         txt: &str,
         state: &mut HashMap<String, MarketSnapshot>,
@@ -305,6 +309,13 @@ impl OkxMarketDataSource {
             snapshot.symbol.quote.to_uppercase()
         );
 
+        if cfg!(debug_assertions) && snapshot.last > 0.0 && (snapshot.last as i64) % 5 == 0 {
+            warn!(
+                last = snapshot.last,
+                "snapshot price looks like old synthetic ladder; check market.mode and wiring"
+            );
+        }
+
         if let Ok(payload) = serde_json::to_vec(&snapshot) {
             if let Err(err) = self.bus.publish(&subject, BusMessage(payload)).await {
                 error!(?err, "failed to publish OKX snapshot");
@@ -414,7 +425,84 @@ mod tests {
         };
 
         let mut state = std::collections::HashMap::new();
-        stream.handle_text(payload, &mut state).await.unwrap();
+        let mut initial_logs = 0usize;
+        stream
+            .handle_text(payload, &mut state, &mut initial_logs)
+            .await
+            .unwrap();
+
+        let snap = state.get("BTC-USDT").cloned().expect("snapshot stored");
+        assert_eq!(snap.exchange, ExchangeId::Okx);
+        assert_eq!(snap.symbol.base, "BTC");
+        assert_eq!(snap.symbol.quote, "USDT");
+        assert!((snap.last - 29_123.5).abs() < f64::EPSILON);
+        assert!((snap.bid - 29_123.0).abs() < f64::EPSILON);
+        assert!((snap.ask - 29_124.0).abs() < f64::EPSILON);
+        assert!((snap.volume_24h - 456.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn parses_okx_book_message_uses_top_of_book() {
+        let payload = r#"{
+            "arg": {"channel": "books5", "instId": "BTC-USDT"},
+            "data": [
+                {
+                    "asks": [["29125.0", "12", "0", "1"], ["29130", "2", "0", "2"]],
+                    "bids": [["29120.0", "3", "0", "1"], ["29110", "1", "0", "2"]],
+                    "instId": "BTC-USDT",
+                    "ts": "1700000000000"
+                }
+            ]
+        }"#;
+
+        let stream = OkxMarketDataSource {
+            bus: Arc::new(w2uos_bus::LocalBus::new()),
+            ws_url: "".to_string(),
+            instruments: vec!["BTC-USDT".to_string()],
+            history_tx: None,
+        };
+
+        let mut state = std::collections::HashMap::new();
+        let mut initial_logs = 0usize;
+        stream
+            .handle_text(payload, &mut state, &mut initial_logs)
+            .await
+            .unwrap();
+
+        let snap = state.get("BTC-USDT").cloned().expect("snapshot stored");
+        assert_eq!(snap.exchange, ExchangeId::Okx);
+        assert!((snap.bid - 29_120.0).abs() < f64::EPSILON);
+        assert!((snap.ask - 29_125.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn parses_okx_trade_message_updates_last() {
+        let payload = r#"{
+            "arg": {"channel": "trades", "instId": "BTC-USDT"},
+            "data": [
+                {
+                    "instId": "BTC-USDT",
+                    "px": "29126.5"
+                }
+            ]
+        }"#;
+
+        let stream = OkxMarketDataSource {
+            bus: Arc::new(w2uos_bus::LocalBus::new()),
+            ws_url: "".to_string(),
+            instruments: vec!["BTC-USDT".to_string()],
+            history_tx: None,
+        };
+
+        let mut state = std::collections::HashMap::new();
+        let mut initial_logs = 0usize;
+        stream
+            .handle_text(payload, &mut state, &mut initial_logs)
+            .await
+            .unwrap();
+
+        let snap = state.get("BTC-USDT").cloned().expect("snapshot stored");
+        assert!((snap.last - 29_126.5).abs() < f64::EPSILON);
     }
 
     #[test]

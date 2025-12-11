@@ -176,6 +176,11 @@ impl LivePipelineState {
     pub fn known_symbols(&self) -> Vec<String> {
         self.symbols.clone()
     }
+
+    pub async fn all_snapshots(&self) -> Vec<MarketSnapshot> {
+        let guard = self.snapshots_by_symbol.lock().await;
+        guard.values().cloned().collect()
+    }
 }
 
 fn normalize_symbol(symbol: &str) -> String {
@@ -602,6 +607,34 @@ impl ApiContext {
             spread_bps,
             volume_24h: snapshot.volume_24h,
         }))
+    }
+
+    pub async fn all_market_snapshots(&self) -> Result<Vec<MarketSnapshotDto>> {
+        let snapshots = self.live_state.all_snapshots().await;
+        let mut dtos = Vec::new();
+        for snapshot in snapshots {
+            let spread_bps = if snapshot.bid > 0.0 && snapshot.ask > 0.0 {
+                ((snapshot.ask - snapshot.bid) / ((snapshot.bid + snapshot.ask) / 2.0)) * 10_000.0
+            } else {
+                0.0
+            };
+
+            dtos.push(MarketSnapshotDto {
+                ts: snapshot.ts,
+                exchange: format!("{}", snapshot.exchange),
+                symbol: SymbolDto {
+                    base: snapshot.symbol.base.clone(),
+                    quote: snapshot.symbol.quote.clone(),
+                },
+                last: snapshot.last,
+                bid: snapshot.bid,
+                ask: snapshot.ask,
+                spread_bps,
+                volume_24h: snapshot.volume_24h,
+            });
+        }
+
+        Ok(dtos)
     }
 
     pub async fn live_orders(&self, limit: usize) -> Result<Vec<LiveOrderDto>> {

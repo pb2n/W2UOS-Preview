@@ -190,6 +190,9 @@ impl MarketDataService {
     }
 
     fn select_source(&self, cfg: &MarketDataConfig) -> MarketDataSource {
+        // IMPORTANT:
+        // - OkxLive → real OKX WS via OkxMarketDataSource (no synthetic prices)
+        // - Mock    → synthetic/demo generators for development only
         match cfg.mode {
             MarketMode::OkxLive => {
                 let instruments = if !cfg.symbols.is_empty() {
@@ -232,7 +235,12 @@ impl MarketDataService {
                     return MarketDataSource::Simulation;
                 }
 
-                info!(url = %ws_url, instruments = ?instruments, "starting OKX live market source");
+                info!(
+                    mode = ?cfg.mode,
+                    url = %ws_url,
+                    instruments = ?instruments,
+                    "starting OKX live market-data source (OkxLive mode, synthetic generators disabled)"
+                );
                 let stream = OkxMarketDataSource::new(
                     Arc::clone(&self.bus),
                     ws_url,
