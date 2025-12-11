@@ -26,8 +26,12 @@ w2uos-log = { path = "../w2uos-log" }
 w2uos-net = { path = "../w2uos-net" }
 w2uos-backtest = { path = "../w2uos-backtest" }
 w2uos-config = { path = "../w2uos-config" }
+uuid = { version = "1", features = ["v4"] }
+hostname = "0.3"
+sysinfo = "0.30"
 
 [dev-dependencies]
 actix-rt = "2.9"
 actix-web = { version = "4.5", features = ["macros"] }
 async-trait = { workspace = true }
+w2uos-service = { path = "../w2uos-service" }

@@ -9,6 +9,49 @@ pub enum ExchangeId {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TradingMode {
+    Simulated,
+    LiveOkx,
+    LiveBinance,
+}
+
+impl Default for TradingMode {
+    fn default() -> Self {
+        TradingMode::Simulated
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MarketMode {
+    #[serde(
+        alias = "liveokx",
+        alias = "LiveOkx",
+        alias = "okx_live",
+        alias = "OkxLive"
+    )]
+    OkxLive,
+    #[serde(alias = "simulated", alias = "simulation", alias = "Mock")]
+    Mock,
+    Replay,
+}
+
+impl Default for MarketMode {
+    fn default() -> Self {
+        MarketMode::Mock
+    }
+}
+
+impl MarketMode {
+    pub fn to_trading_mode(&self) -> TradingMode {
+        match self {
+            MarketMode::OkxLive => TradingMode::LiveOkx,
+            MarketMode::Mock | MarketMode::Replay => TradingMode::Simulated,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Symbol {
     pub base: String,
     pub quote: String,

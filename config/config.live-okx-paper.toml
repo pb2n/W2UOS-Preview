@@ -1,3 +1,7 @@
+# Example configuration for running W2UOS with live OKX market data and paper trading.
+# Credentials are loaded from environment variables; export the variables before starting
+# the node (e.g., export W2UOS_OKX_API_KEY=..., etc.).
+
 net_profile = { mode = "Direct", request_jitter_ms = [10, 60], max_parallel_requests_per_target = 4, connection_reuse_policy = "RandomReuse" }
 node_id = "w2uos-node"
 node_role = "AllInOne"
@@ -14,10 +18,21 @@ id = "admin"
 role = "Admin"
 api_key_hash = "7e9f8fd111802be56c379d597842e29b2cebd35ff2133d431a49fa556a18704e"
 
+[exchange]
+name = "okx"
+# Modes: simulation, live-paper, live-real.
+mode = "live-paper"
+rest_base_url = "https://www.okx.com"
+ws_public_url = "wss://ws.okx.com:8443/ws/v5/public"
+ws_private_url = "wss://ws.okx.com:8443/ws/v5/private"
+api_key_env = "W2UOS_OKX_API_KEY"
+api_secret_env = "W2UOS_OKX_API_SECRET"
+passphrase_env = "W2UOS_OKX_PASSPHRASE"
+
 [market_data]
-mode = "Mock"
+mode = "OkxLive"
 exchange = "OKX"
-instruments = ["BTC-USDT-SWAP"]
+instruments = ["BTC-USDT-SWAP", "ETH-USDT-SWAP"]
 ws_url = "wss://ws.okx.com:8443/ws/v5/public"
 
 [market_data.net_profile]
@@ -26,14 +41,12 @@ request_jitter_ms = [5, 20]
 max_parallel_requests_per_target = 2
 connection_reuse_policy = "AlwaysReuse"
 
-[[market_data.subscriptions]]
-exchange = "Okx"
-symbol = { base = "BTC", quote = "USDT" }
-ws_url = "wss://ws.okx.com:8443/ws/v5/public"
-
 [execution]
 initial_balance_usdt = 100000
-live_trading_enabled = false
+live_trading_enabled = true
+
+[execution.paper]
+slippage_bps = 5
 
 [execution.net_profile]
 mode = "Direct"

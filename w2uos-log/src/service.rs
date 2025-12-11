@@ -10,7 +10,9 @@ use w2uos_service::{Service, ServiceId};
 use std::collections::HashMap;
 
 use crate::sink::LogSink;
-use crate::types::{LatencyBucket, LatencyRecord, LatencySummary, LogEvent, TradeRecord};
+use crate::types::{
+    ControlActionRecord, LatencyBucket, LatencyRecord, LatencySummary, LogEvent, TradeRecord,
+};
 
 pub struct LogService {
     pub sink: Arc<dyn LogSink>,
@@ -19,6 +21,7 @@ pub struct LogService {
     recent_events: Arc<Mutex<Vec<LogEvent>>>,
     latency_state: Arc<Mutex<HashMap<String, PartialLatencyState>>>,
     latency_records: Arc<Mutex<Vec<LatencyRecord>>>,
+    control_actions: Arc<Mutex<Vec<ControlActionRecord>>>,
 }
 
 impl LogService {
@@ -31,6 +34,7 @@ impl LogService {
             recent_events: Arc::new(Mutex::new(Vec::new())),
             latency_state: Arc::new(Mutex::new(HashMap::new())),
             latency_records: Arc::new(Mutex::new(Vec::new())),
+            control_actions: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -128,6 +132,19 @@ impl LogService {
         self.sink.write_trade(trade).await
     }
 
+    pub async fn log_control_action(&self, action: ControlActionRecord) -> Result<()> {
+        {
+            let mut guard = self.control_actions.lock().await;
+            guard.push(action.clone());
+            if guard.len() > 500 {
+                let excess = guard.len() - 500;
+                guard.drain(0..excess);
+            }
+        }
+
+        self.sink.write_control_action(action).await
+    }
+
     pub async fn run(self: Arc<Self>) -> Result<()> {
         info!("log service running");
         let mut event_sub = self.bus.subscribe("log.event").await?;
@@ -160,6 +177,13 @@ impl LogService {
 
     pub async fn recent_events(&self, limit: usize) -> Vec<LogEvent> {
         let guard = self.recent_events.lock().await;
+        let len = guard.len();
+        let start = len.saturating_sub(limit);
+        guard[start..].to_vec()
+    }
+
+    pub async fn recent_control_actions(&self, limit: usize) -> Vec<ControlActionRecord> {
+        let guard = self.control_actions.lock().await;
         let len = guard.len();
         let start = len.saturating_sub(limit);
         guard[start..].to_vec()

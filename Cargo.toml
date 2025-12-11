@@ -13,6 +13,7 @@ members = [
     "wru-strategy",
     "w2uos-service",
     "w2uos-config",
+    "w2uos-tui",
 ]
 resolver = "2"
 

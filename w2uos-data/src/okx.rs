@@ -1,8 +1,17 @@
-use std::sync::Arc;
+//! OKX live market data source used in LIVE-3. Connects to the public websocket,
+//! subscribes to ticker updates, and emits normalized `MarketSnapshot` events into
+//! the internal bus while persisting to the optional history sink.
+//!
+//! In `MarketMode::OkxLive`, this is the ONLY market data source for OKX. All
+//! synthetic or demo generators MUST be disabled. Live and paper trading rely on
+//! this module consuming the real OKX public websocket.
+
+use std::{collections::HashMap, fmt, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use tokio::{sync::mpsc::Sender, time::sleep};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
@@ -10,32 +19,76 @@ use w2uos_bus::{BusMessage, MessageBus};
 use w2uos_log::{log_event_via_bus, LogEvent, LogLevel, LogSource};
 use w2uos_service::TraceId;
 
-use crate::service::MarketDataSubscription;
 use crate::types::{ExchangeId, MarketSnapshot, Symbol};
 
-pub struct OkxMarketStream {
+#[derive(Clone)]
+pub struct OkxMarketDataSource {
     pub bus: Arc<dyn MessageBus>,
     pub ws_url: String,
-    pub subscriptions: Vec<MarketDataSubscription>,
-    pub history_tx: Option<tokio::sync::mpsc::Sender<MarketSnapshot>>,
+    pub instruments: Vec<String>,
+    pub history_tx: Option<Sender<MarketSnapshot>>,
 }
 
-impl OkxMarketStream {
-    pub async fn run(&self) -> Result<()> {
-        info!(url = %self.ws_url, "connecting OKX public stream");
+impl fmt::Debug for OkxMarketDataSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OkxMarketDataSource")
+            .field("ws_url", &self.ws_url)
+            .field("instruments", &self.instruments)
+            .finish()
+    }
+}
+
+impl OkxMarketDataSource {
+    pub fn new(
+        bus: Arc<dyn MessageBus>,
+        ws_url: String,
+        instruments: Vec<String>,
+        history_tx: Option<Sender<MarketSnapshot>>,
+    ) -> Self {
+        Self {
+            bus,
+            ws_url,
+            instruments,
+            history_tx,
+        }
+    }
+
+    pub async fn run(self) -> Result<()> {
+        let mut backoff = Duration::from_secs(1);
+        loop {
+            match self.stream_once().await {
+                Ok(_) => {
+                    backoff = Duration::from_secs(1);
+                }
+                Err(err) => {
+                    warn!(?err, "OKX market stream error; reconnecting");
+                    sleep(backoff).await;
+                    backoff = (backoff * 2).min(Duration::from_secs(30));
+                }
+            }
+        }
+    }
+
+    async fn stream_once(&self) -> Result<()> {
+        info!(url = %self.ws_url, instruments = ?self.instruments, "connecting OKX public stream");
         let (ws_stream, _) = connect_async(&self.ws_url).await?;
         let (mut write, mut read) = ws_stream.split();
 
-        let args: Vec<_> = self
-            .subscriptions
-            .iter()
-            .map(|sub| {
-                serde_json::json!({
-                    "channel": "tickers",
-                    "instId": format!("{}-{}", sub.symbol.base.to_uppercase(), sub.symbol.quote.to_uppercase())
-                })
-            })
-            .collect();
+        let mut args: Vec<_> = Vec::new();
+        for inst_id in &self.instruments {
+            args.push(serde_json::json!({
+                "channel": "tickers",
+                "instId": inst_id,
+            }));
+            args.push(serde_json::json!({
+                "channel": "books5",
+                "instId": inst_id,
+            }));
+            args.push(serde_json::json!({
+                "channel": "trades",
+                "instId": inst_id,
+            }));
+        }
 
         let subscribe_msg = serde_json::json!({
             "op": "subscribe",
@@ -46,112 +99,281 @@ impl OkxMarketStream {
             .send(Message::Text(subscribe_msg.to_string()))
             .await
             .context("send subscribe")?;
+        info!("OKX public stream subscribed");
+
+        let mut state: HashMap<String, MarketSnapshot> = HashMap::new();
+        let mut initial_logs = 0usize;
 
         while let Some(msg) = read.next().await {
             let msg = msg?;
             match msg {
                 Message::Text(txt) => {
-                    if let Err(err) = self.handle_text(&txt).await {
+                    if let Err(err) = self.handle_text(&txt, &mut state, &mut initial_logs).await {
                         warn!(?err, "failed to process OKX message");
+                    }
+                }
+                Message::Binary(bin) => {
+                    if let Ok(txt) = String::from_utf8(bin.clone()) {
+                        if let Err(err) =
+                            self.handle_text(&txt, &mut state, &mut initial_logs).await
+                        {
+                            warn!(?err, "failed to process OKX binary message");
+                        }
+                    } else {
+                        warn!(?bin, "unrecognized binary frame from OKX");
                     }
                 }
                 Message::Ping(payload) => {
                     write.send(Message::Pong(payload)).await.ok();
                 }
                 Message::Close(frame) => {
-                    warn!(?frame, "OKX stream closed");
-                    break;
+                    warn!(?frame, "OKX stream closed by server");
+                    return Err(anyhow!("OKX stream closed"));
                 }
                 _ => {}
             }
         }
 
-        Ok(())
+        Err(anyhow!("OKX websocket ended"))
     }
 
-    async fn handle_text(&self, txt: &str) -> Result<()> {
+    pub async fn handle_text(
+        &self,
+        txt: &str,
+        state: &mut HashMap<String, MarketSnapshot>,
+        initial_logs: &mut usize,
+    ) -> Result<()> {
         if txt.contains("event") {
             debug!(payload = %txt, "OKX event message");
             return Ok(());
         }
 
-        let envelope: OkxTickerEnvelope =
-            serde_json::from_str(txt).context("parse okx ticker envelope")?;
+        let envelope: serde_json::Value =
+            serde_json::from_str(txt).context("parse okx envelope")?;
+        let channel = envelope
+            .get("arg")
+            .and_then(|a| a.get("channel"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("");
 
-        for ticker in envelope.data {
-            let symbol = Self::parse_symbol(&ticker.inst_id)?;
-            let trace_id = Some(TraceId::new());
-            let snapshot = MarketSnapshot {
-                ts: chrono::Utc::now(),
-                exchange: ExchangeId::Okx,
-                symbol: symbol.clone(),
-                last: ticker.last.parse::<f64>().unwrap_or_default(),
-                bid: ticker.bid_px.parse::<f64>().unwrap_or_default(),
-                ask: ticker.ask_px.parse::<f64>().unwrap_or_default(),
-                volume_24h: ticker.vol24h.parse::<f64>().unwrap_or_default(),
-                trace_id: trace_id.clone(),
-            };
-
-            let subject = format!(
-                "market.{}.{}{}",
-                snapshot.exchange,
-                snapshot.symbol.base.to_uppercase(),
-                snapshot.symbol.quote.to_uppercase()
-            );
-
-            if let Ok(payload) = serde_json::to_vec(&snapshot) {
-                if let Err(err) = self.bus.publish(&subject, BusMessage(payload)).await {
-                    error!(?err, "failed to publish OKX snapshot");
+        match channel {
+            "tickers" => {
+                let parsed: OkxEnvelope<OkxTicker> = serde_json::from_value(envelope)?;
+                for ticker in parsed.data {
+                    if let Some(snapshot) = self.update_snapshot_from_ticker(&ticker, state)? {
+                        self.maybe_log_initial(&snapshot, initial_logs);
+                        self.emit_snapshot(snapshot).await;
+                    }
                 }
             }
-
-            if let Some(tx) = self.history_tx.as_ref() {
-                if let Err(err) = tx.try_send(snapshot.clone()) {
-                    warn!(?err, "failed to enqueue snapshot for history");
+            "books5" => {
+                let parsed: OkxEnvelope<OkxBook> = serde_json::from_value(envelope)?;
+                for book in parsed.data {
+                    if let Some(snapshot) = self.update_snapshot_from_book(&book, state)? {
+                        self.maybe_log_initial(&snapshot, initial_logs);
+                        self.emit_snapshot(snapshot).await;
+                    }
                 }
             }
-
-            let evt = LogEvent {
-                ts: snapshot.ts,
-                level: LogLevel::Info,
-                source: LogSource::MarketData,
-                message: "okx market tick".to_string(),
-                fields: serde_json::json!({"subject": subject}),
-                correlation_id: None,
-                trace_id,
-            };
-            let _ = log_event_via_bus(self.bus.as_ref(), &evt).await;
+            "trades" => {
+                let parsed: OkxEnvelope<OkxTrade> = serde_json::from_value(envelope)?;
+                for trade in parsed.data {
+                    if let Some(snapshot) = self.update_snapshot_from_trade(&trade, state)? {
+                        self.maybe_log_initial(&snapshot, initial_logs);
+                        self.emit_snapshot(snapshot).await;
+                    }
+                }
+            }
+            _ => debug!(channel = %channel, "unknown okx channel"),
         }
 
         Ok(())
     }
 
-    fn parse_symbol(inst_id: &str) -> Result<Symbol> {
-        let mut parts = inst_id.split('-');
-        let base = parts
-            .next()
-            .ok_or_else(|| anyhow!("missing base in instId"))?
-            .to_string();
-        let quote = parts
-            .next()
-            .ok_or_else(|| anyhow!("missing quote in instId"))?
-            .to_string();
-        Ok(Symbol { base, quote })
+    fn update_snapshot_from_ticker(
+        &self,
+        ticker: &OkxTicker,
+        state: &mut HashMap<String, MarketSnapshot>,
+    ) -> Result<Option<MarketSnapshot>> {
+        let symbol = match instrument_to_symbol(&ticker.inst_id) {
+            Some(sym) => sym,
+            None => {
+                warn!(inst_id = %ticker.inst_id, "unable to parse OKX instrument id");
+                return Ok(None);
+            }
+        };
+        let ts = ticker
+            .ts
+            .as_deref()
+            .and_then(|ts| ts.parse::<i64>().ok())
+            .and_then(|millis| chrono::DateTime::from_timestamp_millis(millis))
+            .unwrap_or_else(|| chrono::Utc::now());
+        let key = ticker.inst_id.clone();
+        let snap = state.entry(key.clone()).or_insert_with(|| MarketSnapshot {
+            ts,
+            exchange: ExchangeId::Okx,
+            symbol: symbol.clone(),
+            last: 0.0,
+            bid: 0.0,
+            ask: 0.0,
+            volume_24h: 0.0,
+            trace_id: None,
+        });
+
+        snap.ts = ts;
+        snap.symbol = symbol;
+        snap.last = ticker.last.parse::<f64>().unwrap_or(snap.last);
+        snap.bid = ticker.bid_px.parse::<f64>().unwrap_or(snap.bid);
+        snap.ask = ticker.ask_px.parse::<f64>().unwrap_or(snap.ask);
+        snap.volume_24h = ticker.vol24h.parse::<f64>().unwrap_or(snap.volume_24h);
+        Ok(Some(snap.clone()))
+    }
+
+    fn update_snapshot_from_book(
+        &self,
+        book: &OkxBook,
+        state: &mut HashMap<String, MarketSnapshot>,
+    ) -> Result<Option<MarketSnapshot>> {
+        let symbol = match instrument_to_symbol(&book.inst_id) {
+            Some(sym) => sym,
+            None => {
+                warn!(inst_id = %book.inst_id, "unable to parse OKX instrument id");
+                return Ok(None);
+            }
+        };
+        let key = book.inst_id.clone();
+        let snap = state.entry(key.clone()).or_insert_with(|| MarketSnapshot {
+            ts: chrono::Utc::now(),
+            exchange: ExchangeId::Okx,
+            symbol: symbol.clone(),
+            last: 0.0,
+            bid: 0.0,
+            ask: 0.0,
+            volume_24h: 0.0,
+            trace_id: None,
+        });
+
+        snap.symbol = symbol;
+        snap.ts = chrono::Utc::now();
+        if let Some(bid) = book.bids.first() {
+            snap.bid = bid
+                .get(0)
+                .and_then(|p| p.parse::<f64>().ok())
+                .unwrap_or(snap.bid);
+        }
+        if let Some(ask) = book.asks.first() {
+            snap.ask = ask
+                .get(0)
+                .and_then(|p| p.parse::<f64>().ok())
+                .unwrap_or(snap.ask);
+        }
+
+        Ok(Some(snap.clone()))
+    }
+
+    fn update_snapshot_from_trade(
+        &self,
+        trade: &OkxTrade,
+        state: &mut HashMap<String, MarketSnapshot>,
+    ) -> Result<Option<MarketSnapshot>> {
+        let symbol = match instrument_to_symbol(&trade.inst_id) {
+            Some(sym) => sym,
+            None => {
+                warn!(inst_id = %trade.inst_id, "unable to parse OKX instrument id");
+                return Ok(None);
+            }
+        };
+        let key = trade.inst_id.clone();
+        let snap = state.entry(key.clone()).or_insert_with(|| MarketSnapshot {
+            ts: chrono::Utc::now(),
+            exchange: ExchangeId::Okx,
+            symbol: symbol.clone(),
+            last: 0.0,
+            bid: 0.0,
+            ask: 0.0,
+            volume_24h: 0.0,
+            trace_id: None,
+        });
+
+        snap.symbol = symbol;
+        snap.ts = chrono::Utc::now();
+        snap.last = trade.last_px.parse::<f64>().unwrap_or(snap.last);
+        Ok(Some(snap.clone()))
+    }
+
+    async fn emit_snapshot(&self, snapshot: MarketSnapshot) {
+        let subject = format!(
+            "market.{}.{}{}",
+            snapshot.exchange,
+            snapshot.symbol.base.to_uppercase(),
+            snapshot.symbol.quote.to_uppercase()
+        );
+
+        if cfg!(debug_assertions) && snapshot.last > 0.0 && (snapshot.last as i64) % 5 == 0 {
+            warn!(
+                last = snapshot.last,
+                "snapshot price looks like old synthetic ladder; check market.mode and wiring"
+            );
+        }
+
+        if let Ok(payload) = serde_json::to_vec(&snapshot) {
+            if let Err(err) = self.bus.publish(&subject, BusMessage(payload)).await {
+                error!(?err, "failed to publish OKX snapshot");
+            }
+        }
+
+        if let Some(tx) = self.history_tx.as_ref() {
+            if let Err(err) = tx.try_send(snapshot.clone()) {
+                warn!(?err, "failed to enqueue snapshot for history");
+            }
+        }
+
+        let evt = LogEvent {
+            ts: snapshot.ts,
+            level: LogLevel::Info,
+            source: LogSource::MarketData,
+            message: "okx market tick".to_string(),
+            fields: serde_json::json!({"subject": subject}),
+            correlation_id: None,
+            trace_id: snapshot.trace_id.clone().or_else(|| Some(TraceId::new())),
+        };
+        let _ = log_event_via_bus(self.bus.as_ref(), &evt).await;
+    }
+
+    fn maybe_log_initial(&self, snapshot: &MarketSnapshot, counter: &mut usize) {
+        if *counter < 5 {
+            info!(
+                exchange = ?snapshot.exchange,
+                symbol = %format!("{}/{}", snapshot.symbol.base, snapshot.symbol.quote),
+                last = snapshot.last,
+                bid = snapshot.bid,
+                ask = snapshot.ask,
+                "received live OKX snapshot"
+            );
+            *counter += 1;
+        }
     }
 }
 
+/// Convert an OKX instrument identifier (e.g., "BTC-USDT-SWAP") into the internal `Symbol`.
+/// Only the base and quote legs are extracted; suffixes like `SWAP` are ignored.
+pub fn instrument_to_symbol(inst_id: &str) -> Option<Symbol> {
+    let mut parts = inst_id.split('-');
+    let base = parts.next()?.to_string();
+    let quote = parts.next()?.to_string();
+    Some(Symbol { base, quote })
+}
+
 #[derive(Debug, Deserialize)]
-struct OkxTickerEnvelope {
-    #[allow(dead_code)]
+struct OkxEnvelope<T> {
     arg: OkxArg,
-    data: Vec<OkxTicker>,
+    data: Vec<T>,
 }
 
 #[derive(Debug, Deserialize)]
 struct OkxArg {
     #[serde(rename = "instId")]
     inst_id: Option<String>,
-    #[allow(dead_code)]
     channel: String,
 }
 
@@ -167,6 +389,24 @@ struct OkxTicker {
     ask_px: String,
     #[serde(rename = "vol24h")]
     vol24h: String,
+    #[serde(rename = "ts")]
+    ts: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OkxBook {
+    #[serde(rename = "instId")]
+    inst_id: String,
+    bids: Vec<Vec<String>>, // [price, size, ...]
+    asks: Vec<Vec<String>>, // [price, size, ...]
+}
+
+#[derive(Debug, Deserialize)]
+struct OkxTrade {
+    #[serde(rename = "instId")]
+    inst_id: String,
+    #[serde(rename = "px")]
+    last_px: String,
 }
 
 #[cfg(test)]
@@ -177,13 +417,98 @@ mod tests {
     async fn parses_okx_ticker_message() {
         let payload = r#"{"arg":{"channel":"tickers","instId":"BTC-USDT"},"data":[{"instType":"SPOT","instId":"BTC-USDT","last":"29123.5","lastSz":"0.001","askPx":"29124","askSz":"0.5","bidPx":"29123","bidSz":"0.5","open24h":"30000","high24h":"31000","low24h":"28000","volCcy24h":"123","vol24h":"456","ts":"1700000000000","sodUtc0":"0","sodUtc8":"0"}]}"#;
 
-        let stream = OkxMarketStream {
+        let stream = OkxMarketDataSource {
             bus: Arc::new(w2uos_bus::LocalBus::new()),
             ws_url: "".to_string(),
-            subscriptions: vec![],
+            instruments: vec!["BTC-USDT".to_string()],
             history_tx: None,
         };
 
-        stream.handle_text(payload).await.unwrap();
+        let mut state = std::collections::HashMap::new();
+        let mut initial_logs = 0usize;
+        stream
+            .handle_text(payload, &mut state, &mut initial_logs)
+            .await
+            .unwrap();
+
+        let snap = state.get("BTC-USDT").cloned().expect("snapshot stored");
+        assert_eq!(snap.exchange, ExchangeId::Okx);
+        assert_eq!(snap.symbol.base, "BTC");
+        assert_eq!(snap.symbol.quote, "USDT");
+        assert!((snap.last - 29_123.5).abs() < f64::EPSILON);
+        assert!((snap.bid - 29_123.0).abs() < f64::EPSILON);
+        assert!((snap.ask - 29_124.0).abs() < f64::EPSILON);
+        assert!((snap.volume_24h - 456.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn parses_okx_book_message_uses_top_of_book() {
+        let payload = r#"{
+            "arg": {"channel": "books5", "instId": "BTC-USDT"},
+            "data": [
+                {
+                    "asks": [["29125.0", "12", "0", "1"], ["29130", "2", "0", "2"]],
+                    "bids": [["29120.0", "3", "0", "1"], ["29110", "1", "0", "2"]],
+                    "instId": "BTC-USDT",
+                    "ts": "1700000000000"
+                }
+            ]
+        }"#;
+
+        let stream = OkxMarketDataSource {
+            bus: Arc::new(w2uos_bus::LocalBus::new()),
+            ws_url: "".to_string(),
+            instruments: vec!["BTC-USDT".to_string()],
+            history_tx: None,
+        };
+
+        let mut state = std::collections::HashMap::new();
+        let mut initial_logs = 0usize;
+        stream
+            .handle_text(payload, &mut state, &mut initial_logs)
+            .await
+            .unwrap();
+
+        let snap = state.get("BTC-USDT").cloned().expect("snapshot stored");
+        assert_eq!(snap.exchange, ExchangeId::Okx);
+        assert!((snap.bid - 29_120.0).abs() < f64::EPSILON);
+        assert!((snap.ask - 29_125.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn parses_okx_trade_message_updates_last() {
+        let payload = r#"{
+            "arg": {"channel": "trades", "instId": "BTC-USDT"},
+            "data": [
+                {
+                    "instId": "BTC-USDT",
+                    "px": "29126.5"
+                }
+            ]
+        }"#;
+
+        let stream = OkxMarketDataSource {
+            bus: Arc::new(w2uos_bus::LocalBus::new()),
+            ws_url: "".to_string(),
+            instruments: vec!["BTC-USDT".to_string()],
+            history_tx: None,
+        };
+
+        let mut state = std::collections::HashMap::new();
+        let mut initial_logs = 0usize;
+        stream
+            .handle_text(payload, &mut state, &mut initial_logs)
+            .await
+            .unwrap();
+
+        let snap = state.get("BTC-USDT").cloned().expect("snapshot stored");
+        assert!((snap.last - 29_126.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn converts_instrument_to_symbol() {
+        let symbol = instrument_to_symbol("BTC-USDT-SWAP").unwrap();
+        assert_eq!(symbol.base, "BTC");
+        assert_eq!(symbol.quote, "USDT");
     }
 }
