@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 use w2uos_data::service::MarketHistoryConfig;
-use w2uos_data::{ExchangeId, MarketDataConfig, MarketDataSubscription, Symbol, TradingMode};
+use w2uos_data::{ExchangeId, MarketDataConfig, MarketDataSubscription, MarketMode, Symbol};
 use w2uos_exec::{ExecutionConfig, ExecutionMode, OkxCredentials};
 use w2uos_net::{NetMode, NetProfile};
 use wru_strategy::BotConfig;
@@ -256,7 +256,9 @@ impl Default for NodeConfig {
                 net_profile: NetProfile::default(),
                 history: None,
                 symbols: vec![],
-                mode: TradingMode::Simulated,
+                exchange: None,
+                ws_url: None,
+                mode: MarketMode::Mock,
             },
             execution: ExecutionConfig::default(),
             strategy: StrategySection::default(),

@@ -11,4 +11,4 @@ pub use service::{
     ExchangeDataConfig, ExchangeDataMode, MarketDataConfig, MarketDataKernelService,
     MarketDataService, MarketDataSource, MarketDataSubscription, MarketHistoryConfig,
 };
-pub use types::{ExchangeId, MarketSnapshot, Symbol, TradingMode};
+pub use types::{ExchangeId, MarketMode, MarketSnapshot, Symbol, TradingMode};

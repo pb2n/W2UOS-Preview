@@ -14,8 +14,8 @@ use w2uos_bus::{BusMessage, LocalBus, MessageBus};
 use w2uos_config::{ExchangeConfig, NodeConfig};
 use w2uos_data::{
     okx::instrument_to_symbol, ExchangeDataConfig, ExchangeDataMode, ExchangeId, HistoricalStore,
-    MarketDataKernelService, MarketDataService, MarketDataSubscription, MarketSnapshot, Symbol,
-    TradingMode,
+    MarketDataKernelService, MarketDataService, MarketDataSubscription, MarketMode, MarketSnapshot,
+    Symbol, TradingMode,
 };
 use w2uos_exec::{
     BinanceCredentials, BinanceExecutionConfig, ExecutionConfig as ExecCfg, ExecutionKernelService,
@@ -174,8 +174,14 @@ async fn main() -> Result<()> {
     }
 
     let mut trading_mode = node_config.execution.mode.clone();
-    if trading_mode != node_config.market_data.mode {
-        warn!("execution and market data modes differed; using execution mode");
+    let market_mode = node_config.market_data.mode;
+    let market_trading_mode = market_mode.to_trading_mode();
+    if trading_mode != market_trading_mode {
+        warn!(
+            execution_mode = ?trading_mode,
+            market_mode = ?market_mode,
+            "execution and market data modes differed; using execution mode"
+        );
     }
 
     if !node_config.execution.live_trading_enabled
@@ -185,8 +191,10 @@ async fn main() -> Result<()> {
         trading_mode = TradingMode::Simulated;
     }
 
-    match trading_mode {
-        TradingMode::LiveOkx => {
+    let mut selected_market_mode = market_mode;
+
+    match market_mode {
+        MarketMode::OkxLive => {
             if let Some(okx_cfg) = exchange_data_cfg
                 .as_ref()
                 .filter(|ex| matches!(ex.exchange, ExchangeId::Okx))
@@ -199,26 +207,16 @@ async fn main() -> Result<()> {
             } else {
                 warn!("OKX mode requested but exchange config missing; using simulated");
                 trading_mode = TradingMode::Simulated;
+                selected_market_mode = MarketMode::Mock;
             }
         }
-        TradingMode::LiveBinance => {
-            if let Some(binance_cfg) = exchange_cfg
-                .as_ref()
-                .filter(|ex| matches!(ex.exchange, ExchangeId::Binance))
-            {
-                for sub in &mut config.subscriptions {
-                    if matches!(sub.exchange, ExchangeId::Binance) {
-                        sub.ws_url = binance_cfg.ws_public_url.clone();
-                    }
-                }
-            } else {
-                warn!("Binance mode requested but exchange config missing; using simulated");
-                trading_mode = TradingMode::Simulated;
-            }
+        MarketMode::Mock => {}
+        MarketMode::Replay => {
+            warn!("market replay mode not yet implemented; using simulation");
+            selected_market_mode = MarketMode::Mock;
         }
-        TradingMode::Simulated => {}
     }
-    config.mode = trading_mode.clone();
+    config.mode = selected_market_mode;
 
     let market_subjects: Vec<String> = config
         .subscriptions

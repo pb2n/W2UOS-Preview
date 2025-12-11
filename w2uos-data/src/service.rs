@@ -18,7 +18,7 @@ use crate::{
     binance::BinanceMarketStream,
     history::HistoricalStore,
     okx::OkxMarketDataSource,
-    types::{ExchangeId, MarketSnapshot, Symbol, TradingMode},
+    types::{ExchangeId, MarketMode, MarketSnapshot, Symbol},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -37,6 +37,7 @@ pub struct ExchangeDataConfig {
 
 #[derive(Clone, Debug)]
 pub enum MarketDataSource {
+    // mock-only, never used for live or paper trading
     Simulation,
     OkxLive(OkxMarketDataSource),
     BinanceLive(BinanceMarketStream),
@@ -55,10 +56,14 @@ pub struct MarketDataConfig {
     pub net_profile: NetProfile,
     pub history: Option<MarketHistoryConfig>,
     /// Instrument identifiers for live market data sources (e.g., OKX instId like "BTC-USDT-SWAP").
-    #[serde(default)]
+    #[serde(default, alias = "instruments")]
     pub symbols: Vec<String>,
     #[serde(default)]
-    pub mode: TradingMode,
+    pub exchange: Option<ExchangeId>,
+    #[serde(default)]
+    pub ws_url: Option<String>,
+    #[serde(default)]
+    pub mode: MarketMode,
 }
 
 impl Default for MarketDataConfig {
@@ -68,7 +73,9 @@ impl Default for MarketDataConfig {
             net_profile: NetProfile::default(),
             history: None,
             symbols: vec![],
-            mode: TradingMode::default(),
+            exchange: None,
+            ws_url: None,
+            mode: MarketMode::default(),
         }
     }
 }
@@ -184,7 +191,7 @@ impl MarketDataService {
 
     fn select_source(&self, cfg: &MarketDataConfig) -> MarketDataSource {
         match cfg.mode {
-            TradingMode::LiveOkx => {
+            MarketMode::OkxLive => {
                 let instruments = if !cfg.symbols.is_empty() {
                     cfg.symbols.clone()
                 } else {
@@ -205,11 +212,15 @@ impl MarketDataService {
                     return MarketDataSource::Simulation;
                 }
 
-                let ws_url = self
-                    .exchange_config
-                    .as_ref()
-                    .map(|ex| ex.ws_public_url.clone())
+                let ws_url = cfg
+                    .ws_url
+                    .clone()
                     .filter(|url| !url.is_empty())
+                    .or_else(|| {
+                        self.exchange_config
+                            .as_ref()
+                            .map(|ex| ex.ws_public_url.clone())
+                    })
                     .unwrap_or_else(|| "wss://ws.okx.com:8443/ws/v5/public".to_string());
 
                 if ws_url.is_empty() {
@@ -226,36 +237,15 @@ impl MarketDataService {
                 );
                 MarketDataSource::OkxLive(stream)
             }
-            TradingMode::LiveBinance => {
-                let cfg = cfg.clone();
-                if cfg.subscriptions.is_empty() {
-                    warn!("no Binance subscriptions configured; using simulated market data");
-                    return MarketDataSource::Simulation;
-                }
-
-                let ws_url = cfg
-                    .subscriptions
-                    .first()
-                    .map(|s| s.ws_url.clone())
-                    .unwrap_or_default();
-
-                if ws_url.is_empty() {
-                    warn!("Binance websocket url missing; using simulated market data");
-                    return MarketDataSource::Simulation;
-                }
-
-                let stream = BinanceMarketStream {
-                    bus: Arc::clone(&self.bus),
-                    ws_url,
-                    subscriptions: cfg.subscriptions.clone(),
-                    history_tx: self.history_tx.clone(),
-                };
-                MarketDataSource::BinanceLive(stream)
+            MarketMode::Mock => MarketDataSource::Simulation,
+            MarketMode::Replay => {
+                warn!("market replay mode not yet implemented; using simulated source");
+                MarketDataSource::Simulation
             }
-            TradingMode::Simulated => MarketDataSource::Simulation,
         }
     }
 
+    // mock-only, never used for live or paper trading paths; this is a synthetic ticker loop.
     async fn run_simulated(&self) -> Result<()> {
         let mut price_state: HashMap<String, f64> = HashMap::new();
         let mut ticker = interval(Duration::from_millis(500));

@@ -29,8 +29,10 @@ api_secret_env = "W2UOS_OKX_API_SECRET"
 passphrase_env = "W2UOS_OKX_PASSPHRASE"
 
 [market_data]
-mode = "LiveOkx"
-symbols = ["BTC-USDT-SWAP"]
+mode = "OkxLive"
+exchange = "OKX"
+instruments = ["BTC-USDT-SWAP"]
+ws_url = "wss://ws.okx.com:8443/ws/v5/public"
 
 [market_data.net_profile]
 mode = "Direct"

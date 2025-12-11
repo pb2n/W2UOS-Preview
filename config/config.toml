@@ -15,7 +15,10 @@ role = "Admin"
 api_key_hash = "7e9f8fd111802be56c379d597842e29b2cebd35ff2133d431a49fa556a18704e"
 
 [market_data]
-mode = "Simulated"
+mode = "Mock"
+exchange = "OKX"
+instruments = ["BTC-USDT-SWAP"]
+ws_url = "wss://ws.okx.com:8443/ws/v5/public"
 
 [market_data.net_profile]
 mode = "Direct"
