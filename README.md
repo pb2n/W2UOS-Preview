@@ -1,6 +1,6 @@
-# W2UOS — Web3 Unified Operating System for Quantitative Trading
+# W2UOS-Preview — Operating System for Quantitative Trading
 
-W2UOS is a Rust-native, modular, high-performance trading operating system designed to support the full lifecycle of quantitative trading systems, from simulation and backtesting to live exchange execution, with privacy, extensibility, and distributed deployment as first-class objectives.
+W2UOS-Preview is a Rust-native, modular, high-performance trading operating system designed to support the full lifecycle of quantitative trading systems, from simulation and backtesting to live exchange execution, with privacy, extensibility, and distributed deployment as first-class objectives.
 
 🚧 This is a Preview / Architecture Demonstration Repository
 
@@ -232,7 +232,7 @@ See the LICENSE and NOTICE files for full legal terms.
 
 Author: pb_2n^ (孔穆清)  
 GitHub: https://github.com/pb2n  
-Project Repository: https://github.com/pb2n/W2UOS  
+Project Repository: https://github.com/pb2n/W2UOS-Preview  
 
 The historical Python strategy files previously included in this repository are published for academic and reference purposes only.
 All commercial use, derivative trading systems, or production deployment based on these strategies require explicit written authorization from the author.
