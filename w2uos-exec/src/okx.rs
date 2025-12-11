@@ -84,7 +84,10 @@ impl OkxClient {
             body["px"] = serde_json::json!(px);
         }
 
-        let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let ts = format!(
+            "{:.3}",
+            chrono::Utc::now().timestamp_millis() as f64 / 1000.0
+        );
         let sign = self.sign(&ts, "POST", path, &body.to_string())?;
 
         let url = format!("{}{}", self.rest_base_url, path);
@@ -151,7 +154,10 @@ impl OkxPrivateStream {
         let (ws_stream, _) = connect_async(&self.ws_url).await?;
         let (mut write, mut read) = ws_stream.split();
 
-        let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let ts = format!(
+            "{:.3}",
+            chrono::Utc::now().timestamp_millis() as f64 / 1000.0
+        );
         let sign = self.sign(&ts, "GET", "/users/self/verify", "")?;
 
         let login = serde_json::json!({
@@ -171,7 +177,11 @@ impl OkxPrivateStream {
 
         let sub_msg = serde_json::json!({
             "op": "subscribe",
-            "args": [{"channel": "orders"}],
+            "args": [
+                {"channel": "orders"},
+                {"channel": "account"},
+                {"channel": "positions"}
+            ],
         });
         write
             .send(Message::Text(sub_msg.to_string()))
@@ -206,8 +216,20 @@ impl OkxPrivateStream {
             return Ok(());
         }
 
-        let env: OkxOrderEnvelope =
-            serde_json::from_str(txt).context("parse okx order envelope")?;
+        let value: serde_json::Value =
+            serde_json::from_str(txt).context("parse okx private envelope")?;
+        let channel = value
+            .get("arg")
+            .and_then(|a| a.get("channel"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("");
+
+        if channel != "orders" {
+            debug!(channel, "ignoring non-order private channel");
+            return Ok(());
+        }
+
+        let env: OkxOrderEnvelope = serde_json::from_value(value)?;
         for data in env.data {
             let symbol = Self::parse_symbol(&data.inst_id)?;
             let side = match data.side.as_str() {
